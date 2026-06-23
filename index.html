@@ -97,6 +97,15 @@
   .hall-a{background:#FAEEDA} .hall-a i,.hall-a .h-t{color:#633806} .hall-a .h-d{color:#854F0B}
   .hall-g{background:#E1F5EE} .hall-g i,.hall-g .h-t{color:#04342C} .hall-g .h-d{color:#0F6E56}
 
+  /* Formulario nuevo proyecto */
+  .proj-top{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+  .form-grid label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:4px}
+  .form-grid label.full{grid-column:1 / -1}
+  .form-grid input,.form-grid select,.form-grid textarea{font:inherit;font-size:14px;padding:8px 10px;
+    border:.5px solid var(--bd2);border-radius:var(--radius-sm);background:var(--surface);color:var(--txt);resize:vertical}
+  .form-err{color:#A32D2D;font-size:12px;min-height:16px;margin-bottom:6px}
+
   /* Botones */
   .btn-primary{font:inherit;font-size:13px;padding:8px 16px;border-radius:var(--radius-sm);border:none;background:var(--txt);color:#fff;cursor:pointer}
   .btn-link{font:inherit;font-size:12px;padding:6px 0;border:none;background:none;color:var(--txt);cursor:pointer;margin-bottom:14px;display:flex;align-items:center;gap:5px}
