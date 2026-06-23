@@ -126,7 +126,11 @@ function setTab(tab){
 
 // ---------- PROYECTOS ----------
 function renderProj(){
-  if(!PROYECTOS.length) return `<p class="muted">No hay proyectos todavía. Aparecen cuando Ventas pasa una cotización a “Ganada”.</p>`;
+  const btnNuevo = esDiseno()
+    ? `<div class="proj-top"><button id="btn-nuevo" class="btn-primary"><i class="ti ti-plus"></i> Nuevo proyecto</button>
+         <span class="muted sm">Carga manual (modo prueba)</span></div>`
+    : "";
+  if(!PROYECTOS.length) return btnNuevo + `<p class="muted">No hay proyectos todavía. Aparecen cuando Ventas pasa una cotización a “Ganada”, o cargalos a mano con “Nuevo proyecto”.</p>`;
   const rows = PROYECTOS.map((p,i)=>{
     const s=salud(p), dr=diasRest(p);
     const drTxt = dr==null?"":(dr<0?`${Math.abs(dr)}d vencido`:`${dr}d restantes`);
@@ -145,10 +149,54 @@ function renderProj(){
       </div>
     </div>`;
   }).join("");
-  return `<div class="legend">
+  return btnNuevo + `<div class="legend">
       <span><span class="lg-bar"></span> avance real</span>
       <span><span class="lg-mark"></span> avance esperado por plazo</span>
     </div>${rows}`;
+}
+
+// ---------- FORMULARIO NUEVO PROYECTO ----------
+function renderNuevo(){
+  $("#screen").innerHTML = `
+    <button id="back-nuevo" class="btn-link"><i class="ti ti-arrow-left"></i> Volver</button>
+    <div class="card">
+      <p class="title sm-tit"><i class="ti ti-plus"></i> Nuevo proyecto (carga manual)</p>
+      <div class="form-grid">
+        <label>Nro. IF<input type="text" id="n-if" placeholder="IF-2026-0000"></label>
+        <label>Cliente<input type="text" id="n-cliente" placeholder="Nombre del cliente"></label>
+        <label class="full">Nombre del proyecto<input type="text" id="n-nombre" placeholder="Nombre del proyecto"></label>
+        <label class="full">Requisitos / Ficha descriptiva<textarea id="n-ficha" rows="3" placeholder="Detalle de requisitos..."></textarea></label>
+        <label>Plazo de entrega<input type="date" id="n-plazo"></label>
+        <label>Responsable<input type="text" id="n-resp" placeholder="(opcional)"></label>
+        <label>Estado<select id="n-estado">
+          ${Object.keys(ESTADO_LABEL).map(k=>`<option value="${k}">${ESTADO_LABEL[k]}</option>`).join('')}
+        </select></label>
+      </div>
+      <div id="n-error" class="form-err"></div>
+      <button id="n-guardar" class="btn-primary">Crear proyecto</button>
+    </div>`;
+  bind();
+}
+
+async function guardarNuevo(){
+  const nro_if = $("#n-if").value.trim();
+  const cliente = $("#n-cliente").value.trim();
+  const nombre = $("#n-nombre").value.trim();
+  if(!nro_if || !cliente || !nombre){
+    $("#n-error").textContent = "Nro. IF, cliente y nombre son obligatorios.";
+    return;
+  }
+  const { error } = await sb.from("proyectos").insert({
+    nro_if, cliente, nombre,
+    ficha: $("#n-ficha").value.trim() || null,
+    plazo_entrega: $("#n-plazo").value || null,
+    responsable: $("#n-resp").value.trim() || null,
+    estado: $("#n-estado").value,
+  });
+  if(error){ $("#n-error").textContent = error.message; return; }
+  await cargarProyectos();
+  activo = null;
+  setTab("proj");
 }
 
 async function renderDetalle(){
@@ -253,6 +301,13 @@ function renderAudit(){
 function bind(){
   document.querySelectorAll(".navbtn").forEach(b=>b.onclick=()=>{ if(b.dataset.tab==="proj") activo=null; setTab(b.dataset.tab); });
   $("#logout") && ($("#logout").onclick = logout);
+
+  const btnNuevo = $("#btn-nuevo");
+  if(btnNuevo) btnNuevo.onclick = ()=> renderNuevo();
+  const backNuevo = $("#back-nuevo");
+  if(backNuevo) backNuevo.onclick = ()=>{ activo=null; setTab("proj"); };
+  const nGuardar = $("#n-guardar");
+  if(nGuardar) nGuardar.onclick = guardarNuevo;
 
   document.querySelectorAll(".row-card").forEach(c=>c.onclick=async()=>{
     activo = PROYECTOS[+c.dataset.idx]; await renderDetalle();
