@@ -1,759 +1,165 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestión de Diseño · 4housing</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
-    <style>
-    :root {
-        --bg: #f7f6f2;
-        --surface: #ffffff;
-        --surface2: #f1efe8;
-        --txt: #2c2c2a;
-        --mut: #5f5e5a;
-        --hint: #888780;
-        --bd: rgba(0, 0, 0, .12);
-        --bd2: rgba(0, 0, 0, .22);
-        --radius: 12px;
-        --radius-sm: 8px;
-        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    }
-
-    * {
-        box-sizing: border-box
-    }
-
-    body {
-        margin: 0;
-        background: var(--bg);
-        color: var(--txt);
-        font-family: var(--font);
-        font-size: 15px;
-        line-height: 1.6
-    }
-
-    .wrap {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 24px 18px
-    }
-
-    .muted {
-        color:var(--mut)
-    }
-
-    .sm {
-        font-size:12px
-    }
-
-    .mb {
-        margin-bottom: 10px
-    }
-
-    .title {
-        margin: 0 0 2px;
-        font-weight: 500;
-        font-size: 16px
-    }
-
-    .sm-tit {
-        font-size: 14px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin-bottom: 12px
-    }
-
-    .sec-tit {
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--mut);
-        text-transform: uppercase;
-        letter-spacing: .04em;
-        margin: 14px 0 8px
-    }/* Header */
-
-    .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding-bottom: 12px;
-        margin-bottom: 18px;
-        border-bottom: .5px solid var(--bd)
-    }
-
-    .brand {
-        display: flex;
-        align-items: center;
-        gap: 12px
-    }
-
-    .logo {
-        width: 34px;
-        height: 34px;
-        border-radius: var(--radius-sm);
-        background: var(--txt);
-        color: #fff;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 500;
-        font-size: 13px
-    }
-
-    .brand p {
-        margin: 0
-    }
-
-    .topbar .right {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        font-size: 12px;
-        color: var(--mut)
-    }/* Nav */
-
-    .nav {
-        display: flex;
-        gap: 6px;
-        margin-bottom: 18px;
-        flex-wrap: wrap
-    }
-
-    .navbtn {
-        font: inherit;
-        font-size: 13px;
-        padding: 7px 14px;
-        border-radius: var(--radius-sm);
-        border: .5px solid var(--bd2);
-        background: transparent;
-        color: var(--txt);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 5px
-    }
-
-    .navbtn:hover {
-        background: var(--surface2)
-    }
-
-    .navbtn.active {
-        background: var(--txt);
-        color: #fff;
-        border-color: var(--txt)
-    }/* Cards */
-
-    .card {
-        background: var(--surface);
-        border: .5px solid var(--bd);
-        border-radius: var(--radius);
-        padding: 16px 18px;
-        margin-bottom: 12px
-    }
-
-    .row-card {
-        cursor: pointer;
-        transition: border-color .15s
-    }
-
-    .row-card:hover {
-        border-color: var(--bd2)
-    }
-
-    .row-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 12px;
-        flex-wrap: wrap
-    }
-
-    .pills {
-        display: flex;
-        gap: 6px;
-        flex-wrap: wrap;
-        justify-content: flex-end
-    }
-
-    .pill {
-        font-size: 11px;
-        padding: 3px 9px;
-        border-radius: 999px;
-        white-space: nowrap
-    }
-
-    .row-meta {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-top: 11px;
-        flex-wrap: wrap
-    }
-
-    .chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--mut);
-        background: var(--surface2);
-        padding: 4px 10px;
-        border-radius: 999px
-    }
-
-    .chip b {
-        font-weight: 500;
-        color: var(--txt)
-    }
-
-    .row-prog {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        margin-top: 11px;
-        flex-wrap: wrap
-    }
-
-    .prog-wrap {
-        flex: 1;
-        min-width: 160px;
-        display: flex;
-        align-items: center;
-        gap: 10px
-    }
-
-    .pct {
-        font-size: 12px;
-        font-weight: 500;
-        min-width: 34px;
-        text-align: right
-    }/* Barra plan vs real */
-
-    .track {
-        position: relative;
-        background: var(--surface2);
-        border-radius: 999px;
-        height: 7px;
-        width: 100%
-    }
-
-    .fill {
-        height: 100%;
-        background: var(--txt);
-        border-radius: 999px
-    }
-
-    .mark {
-        position: absolute;
-        top: -3px;
-        bottom: -3px;
-        width: 2px;
-        background: var(--mut)
-    }
-
-    .legend {
-        display: flex;
-        gap: 14px;
-        align-items: center;
-        flex-wrap: wrap;
-        font-size: 11px;
-        color: var(--hint);
-        margin-bottom: 14px
-    }
-
-    .lg-bar {
-        display: inline-block;
-        width: 18px;
-        height: 6px;
-        background: var(--txt);
-        border-radius: 3px;
-        vertical-align: 1px
-    }
-
-    .lg-mark {
-        display: inline-block;
-        width: 2px;
-        height: 11px;
-        background: var(--mut);
-        vertical-align: -2px
-    }/* Detalle */
-
-    .detalle {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 14px
-    }
-
-    table.kv {
-        width: 100%;
-        font-size: 13px;
-        border-collapse: collapse
-    }
-
-    table.kv td {
-        padding: 5px 0;
-        vertical-align: top
-    }
-
-    table.kv td:first-child {
-        color: var(--mut)
-    }
-
-    table.kv td:last-child {
-        text-align: right
-    }
-
-    table.kv td.ficha {
-        text-align: right;
-        color: var(--mut);
-        font-size: 12px
-    }
-
-    .fase {
-        margin-bottom: 16px
-    }
-
-    .fase-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        margin-bottom: 4px
-    }
-
-    .fase-tit {
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--mut);
-        text-transform: uppercase;
-        letter-spacing: .04em
-    }
-
-    .chk {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 9px 0;
-        border-bottom: .5px solid var(--bd);
-        font-size: 14px;
-        cursor: pointer
-    }
-
-    .chk.ro {
-        cursor: default;
-        opacity: .85
-    }
-
-    .box {
-        width: 20px;
-        height: 20px;
-        border-radius: 5px;
-        border: 1.5px solid var(--bd2);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #fff;
-        flex-shrink: 0
-    }
-
-    .box.on {
-        background: var(--txt);
-        border-color: var(--txt)
-    }
-
-    .tachado {
-        color: var(--hint);
-        text-decoration: line-through
-    }
-
-    .plan-box {
-        margin-top: 14px;
-        padding-top: 14px;
-        border-top: .5px solid var(--bd)
-    }
-
-    .plan-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 14px 16px;
-        margin: 8px 0 14px
-    }
-
-    .plan-grid label {
-        display: flex;
-        flex-direction: column;
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--mut);
-        gap: 6px
-    }
-
-    .plan-grid input, .plan-grid select {
-        font: inherit;
-        font-size: 13px;
-        font-weight: 400;
-        padding: 9px 11px;
-        border: 1px solid var(--bd);
-        border-radius: var(--radius-sm);
-        background: var(--surface);
-        color: var(--txt);
-        width: 100%;
-        outline: none;
-        transition: border-color .15s, box-shadow .15s
-    }
-
-    .plan-grid input:hover, .plan-grid select:hover {
-        border-color: var(--bd2)
-    }
-
-    .plan-grid input:focus, .plan-grid select:focus {
-        border-color: var(--txt);
-        box-shadow: 0 0 0 3px rgba(44, 44, 42, .08)
-    }/* Dashboard */
-
-    .metrics {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 12px;
-        margin-bottom: 18px
-    }
-
-    .metric {
-        background: var(--surface2);
-        border-radius: var(--radius-sm);
-        padding: 14px 16px
-    }
-
-    .m-lbl {
-        margin: 0 0 6px;
-        font-size: 13px;
-        color: var(--mut);
-        display: flex;
-        align-items: center;
-        gap: 5px
-    }
-
-    .m-val {
-        margin: 0;
-        font-size: 24px;
-        font-weight: 500
-    }
-
-    .dash-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 10px;
-        flex-wrap: wrap
-    }
-
-    .dr-name {
-        font-size: 12px;
-        width: 140px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis
-    }
-
-    .dr-etapa {
-        width:130px
-    }
-
-    .dr-bar {
-        flex: 1;
-        min-width: 120px
-    }/* Auditoría */
-
-    .drop {
-        border: 1.5px dashed var(--bd2);
-        border-radius: var(--radius-sm);
-        padding: 26px;
-        text-align: center;
-        color: var(--hint);
-        margin: 8px 0 6px;
-        cursor: pointer
-    }
-
-    .drop i {
-        font-size:26px
-    }
-
-    .drop p {
-        margin: 8px 0 0;
-        font-size: 13px
-    }
-
-    .hall {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-        padding: 11px 13px;
-        border-radius: var(--radius-sm);
-        margin-bottom: 8px
-    }
-
-    .hall i {
-        font-size: 17px;
-        flex-shrink:0
-    }
-
-    .h-t {
-        margin: 0;
-        font-size: 13px;
-        font-weight:500
-    }
-
-    .h-d {
-        margin: 0;
-        font-size: 12px
-    }
-
-    .hall-r {
-        background:#FCEBEB
-    }
-
-    .hall-r i, .hall-r .h-t {
-        color:#791F1F
-    }
-
-    .hall-r .h-d {
-        color: #A32D2D
-    }
-
-    .hall-a {
-        background:#FAEEDA
-    }
-
-    .hall-a i, .hall-a .h-t {
-        color:#633806
-    }
-
-    .hall-a .h-d {
-        color: #854F0B
-    }
-
-    .hall-g {
-        background:#E1F5EE
-    }
-
-    .hall-g i, .hall-g .h-t {
-        color:#04342C
-    }
-
-    .hall-g .h-d {
-        color: #0F6E56
-    }/* Formulario nuevo proyecto */
-
-    .proj-top {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 14px;
-        flex-wrap: wrap
-    }
-
-    .form-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 16px 18px;
-        margin: 6px 0 18px
-    }
-
-    .form-grid label {
-        display: flex;
-        flex-direction: column;
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--mut);
-        gap: 6px;
-        letter-spacing: .01em
-    }
-
-    .form-grid label.full {
-        grid-column: 1 / -1
-    }
-
-    .form-grid input, .form-grid select, .form-grid textarea {
-        font: inherit;
-        font-size: 14px;
-        font-weight: 400;
-        color: var(--txt);
-        padding: 10px 12px;
-        border: 1px solid var(--bd);
-        border-radius: var(--radius-sm);
-        background: var(--surface);
-        width: 100%;
-        transition: border-color .15s, box-shadow .15s;
-        outline: none
-    }
-
-    .form-grid input::placeholder, .form-grid textarea::placeholder {
-        color: var(--hint)
-    }
-
-    .form-grid input:hover, .form-grid select:hover, .form-grid textarea:hover {
-        border-color: var(--bd2)
-    }
-
-    .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus {
-        border-color: var(--txt);
-        box-shadow: 0 0 0 3px rgba(44, 44, 42, .08)
-    }
-
-    .form-grid textarea {
-        resize: vertical;
-        min-height: 76px;
-        line-height: 1.5
-    }
-
-    .form-grid select {
-        appearance: none;
-        -webkit-appearance: none;
-        cursor: pointer;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888780' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 12px center;
-        padding-right: 34px
-    }
-
-    .form-err {
-        color: #A32D2D;
-        font-size: 12px;
-        min-height: 16px;
-        margin-bottom: 10px
-    }/* Botones */
-
-    .btn-primary {
-        font: inherit;
-        font-size: 13px;
-        font-weight: 500;
-        padding: 10px 18px;
-        border-radius: var(--radius-sm);
-        border: none;
-        background: var(--txt);
-        color: #fff;
-        cursor: pointer;
-        transition: opacity .15s
-    }
-
-    .btn-primary:hover {
-        opacity: .88
-    }
-
-    .btn-link {
-        font: inherit;
-        font-size: 12px;
-        padding: 6px 0;
-        border: none;
-        background: none;
-        color: var(--txt);
-        cursor: pointer;
-        margin-bottom: 14px;
-        display: flex;
-        align-items: center;
-        gap: 5px
-    }/* Login */
-
-    .login-card {
-        max-width: 360px;
-        margin: 60px auto;
-        background: var(--surface);
-        border: .5px solid var(--bd);
-        border-radius: var(--radius);
-        padding: 28px
-    }
-
-    .login-card h1 {
-        font-size: 18px;
-        font-weight: 500;
-        margin: 0 0 4px
-    }
-
-    .login-card input {
-        width: 100%;
-        font: inherit;
-        font-size: 14px;
-        padding: 9px 11px;
-        border: .5px solid var(--bd2);
-        border-radius: var(--radius-sm);
-        margin-top: 10px;
-        background: var(--surface);
-        color: var(--txt)
-    }
-
-    .login-card .btn-primary {
-        width: 100%;
-        margin-top: 14px;
-        padding: 10px
-    }
-
-    #login-error {
-        color: #A32D2D;
-        font-size: 12px;
-        margin-top: 8px;
-        min-height: 14px
-    }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestión de Diseño · 4housing</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.7.0/dist/tabler-icons.min.css">
+<style>
+  :root{
+    --bg:#f7f6f2; --surface:#ffffff; --surface2:#f1efe8; --txt:#2c2c2a; --mut:#5f5e5a;
+    --hint:#888780; --bd:rgba(0,0,0,.12); --bd2:rgba(0,0,0,.22); --radius:12px; --radius-sm:8px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--font);font-size:15px;line-height:1.6}
+  .wrap{max-width:760px;margin:0 auto;padding:24px 18px}
+  .muted{color:var(--mut)} .sm{font-size:12px} .mb{margin-bottom:10px}
+  .title{margin:0 0 2px;font-weight:500;font-size:16px}
+  .sm-tit{font-size:14px;display:flex;align-items:center;gap:6px;margin-bottom:12px}
+  .sec-tit{font-size:12px;font-weight:500;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 8px}
+
+  /* Header */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding-bottom:12px;margin-bottom:18px;border-bottom:.5px solid var(--bd)}
+  .brand{display:flex;align-items:center;gap:12px}
+  .logo{width:34px;height:34px;border-radius:var(--radius-sm);background:var(--txt);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:500;font-size:13px}
+  .brand p{margin:0}
+  .topbar .right{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--mut)}
+
+  /* Nav */
+  .nav{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap}
+  .navbtn{font:inherit;font-size:13px;padding:7px 14px;border-radius:var(--radius-sm);
+    border:.5px solid var(--bd2);background:transparent;color:var(--txt);cursor:pointer;display:flex;align-items:center;gap:5px}
+  .navbtn:hover{background:var(--surface2)}
+  .navbtn.active{background:var(--txt);color:#fff;border-color:var(--txt)}
+
+  /* Cards */
+  .card{background:var(--surface);border:.5px solid var(--bd);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  .row-card{cursor:pointer;transition:border-color .15s}
+  .row-card:hover{border-color:var(--bd2)}
+  .row-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+  .pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .pill{font-size:11px;padding:3px 9px;border-radius:999px;white-space:nowrap}
+  .row-meta{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mut);
+    background:var(--surface2);padding:4px 10px;border-radius:999px}
+  .chip b{font-weight:500;color:var(--txt)}
+  .row-prog{display:flex;align-items:center;gap:14px;margin-top:11px;flex-wrap:wrap}
+  .prog-wrap{flex:1;min-width:160px;display:flex;align-items:center;gap:10px}
+  .pct{font-size:12px;font-weight:500;min-width:34px;text-align:right}
+
+  /* Barra plan vs real */
+  .track{position:relative;background:var(--surface2);border-radius:999px;height:7px;width:100%}
+  .fill{height:100%;background:var(--txt);border-radius:999px}
+  .mark{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--mut)}
+  .legend{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--hint);margin-bottom:14px}
+  .lg-bar{display:inline-block;width:18px;height:6px;background:var(--txt);border-radius:3px;vertical-align:1px}
+  .lg-mark{display:inline-block;width:2px;height:11px;background:var(--mut);vertical-align:-2px}
+
+  /* Detalle */
+  .detalle{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+  table.kv{width:100%;font-size:13px;border-collapse:collapse}
+  table.kv td{padding:5px 0;vertical-align:top}
+  table.kv td:first-child{color:var(--mut)}
+  table.kv td:last-child{text-align:right}
+  table.kv td.ficha{text-align:right;color:var(--mut);font-size:12px}
+  .fase{margin-bottom:16px}
+  .fase-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .fase-tit{font-size:12px;font-weight:500;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .chk{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:.5px solid var(--bd);font-size:14px;cursor:pointer}
+  .chk.ro{cursor:default;opacity:.85}
+  .box{width:20px;height:20px;border-radius:5px;border:1.5px solid var(--bd2);display:flex;align-items:center;justify-content:center;color:#fff;flex-shrink:0}
+  .box.on{background:var(--txt);border-color:var(--txt)}
+  .tachado{color:var(--hint);text-decoration:line-through}
+
+  .plan-box{margin-top:14px;padding-top:14px;border-top:.5px solid var(--bd)}
+  .plan-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 16px;margin:8px 0 14px}
+  .plan-grid label{display:flex;flex-direction:column;font-size:12px;font-weight:500;color:var(--mut);gap:6px}
+  .plan-grid input,.plan-grid select{font:inherit;font-size:13px;font-weight:400;padding:9px 11px;border:1px solid var(--bd);
+    border-radius:var(--radius-sm);background:var(--surface);color:var(--txt);width:100%;outline:none;transition:border-color .15s, box-shadow .15s}
+  .plan-grid input:hover,.plan-grid select:hover{border-color:var(--bd2)}
+  .plan-grid input:focus,.plan-grid select:focus{border-color:var(--txt);box-shadow:0 0 0 3px rgba(44,44,42,.08)}
+
+  /* Dashboard */
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+  .metric{background:var(--surface2);border-radius:var(--radius-sm);padding:14px 16px}
+  .m-lbl{margin:0 0 6px;font-size:13px;color:var(--mut);display:flex;align-items:center;gap:5px}
+  .m-val{margin:0;font-size:24px;font-weight:500}
+  .dash-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+  .dr-name{font-size:12px;width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dr-etapa{width:130px} .dr-bar{flex:1;min-width:120px}
+
+  /* Auditoría */
+  .drop{border:1.5px dashed var(--bd2);border-radius:var(--radius-sm);padding:26px;text-align:center;color:var(--hint);margin:8px 0 6px;cursor:pointer}
+  .drop i{font-size:26px} .drop p{margin:8px 0 0;font-size:13px}
+  .hall{display:flex;gap:10px;align-items:flex-start;padding:11px 13px;border-radius:var(--radius-sm);margin-bottom:8px}
+  .hall i{font-size:17px;flex-shrink:0} .h-t{margin:0;font-size:13px;font-weight:500} .h-d{margin:0;font-size:12px}
+  .hall-r{background:#FCEBEB} .hall-r i,.hall-r .h-t{color:#791F1F} .hall-r .h-d{color:#A32D2D}
+  .hall-a{background:#FAEEDA} .hall-a i,.hall-a .h-t{color:#633806} .hall-a .h-d{color:#854F0B}
+  .hall-g{background:#E1F5EE} .hall-g i,.hall-g .h-t{color:#04342C} .hall-g .h-d{color:#0F6E56}
+
+  /* Formulario nuevo proyecto */
+  .proj-top{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px 18px;margin:6px 0 18px}
+  .form-grid label{display:flex;flex-direction:column;font-size:12px;font-weight:500;color:var(--mut);gap:6px;letter-spacing:.01em}
+  .form-grid label.full{grid-column:1 / -1}
+  .form-grid input,.form-grid select,.form-grid textarea{font:inherit;font-size:14px;font-weight:400;color:var(--txt);
+    padding:10px 12px;border:1px solid var(--bd);border-radius:var(--radius-sm);background:var(--surface);
+    width:100%;transition:border-color .15s, box-shadow .15s;outline:none}
+  .form-grid input::placeholder,.form-grid textarea::placeholder{color:var(--hint)}
+  .form-grid input:hover,.form-grid select:hover,.form-grid textarea:hover{border-color:var(--bd2)}
+  .form-grid input:focus,.form-grid select:focus,.form-grid textarea:focus{border-color:var(--txt);box-shadow:0 0 0 3px rgba(44,44,42,.08)}
+  .form-grid textarea{resize:vertical;min-height:76px;line-height:1.5}
+  .form-grid select{cursor:pointer}
+  .form-err{color:#A32D2D;font-size:12px;min-height:16px;margin-bottom:10px}
+
+  /* Botones */
+  .btn-primary{font:inherit;font-size:13px;font-weight:500;padding:10px 18px;border-radius:var(--radius-sm);border:none;background:var(--txt);color:#fff;cursor:pointer;transition:opacity .15s}
+  .btn-primary:hover{opacity:.88}
+  .btn-link{font:inherit;font-size:12px;padding:6px 0;border:none;background:none;color:var(--txt);cursor:pointer;margin-bottom:14px;display:flex;align-items:center;gap:5px}
+
+  /* Login */
+  .login-card{max-width:360px;margin:60px auto;background:var(--surface);border:.5px solid var(--bd);border-radius:var(--radius);padding:28px}
+  .login-card h1{font-size:18px;font-weight:500;margin:0 0 4px}
+  .login-card input{width:100%;font:inherit;font-size:14px;padding:9px 11px;border:.5px solid var(--bd2);border-radius:var(--radius-sm);margin-top:10px;background:var(--surface);color:var(--txt)}
+  .login-card .btn-primary{width:100%;margin-top:14px;padding:10px}
+  #login-error{color:#A32D2D;font-size:12px;margin-top:8px;min-height:14px}
+</style>
 </head>
 <body>
 
-    <!-- LOGIN -->
-    <div id="login" class="wrap" style="display:none">
-        <div class="login-card">
-            <div class="brand" style="margin-bottom:18px">
-                <div class="logo">4h</div>
-                <div>
-                    <p class="title">Gestión de Diseño</p>
-                    <p class="muted sm">4housing · acceso interno</p>
-                </div>
-            </div>
-            <h1>Iniciar sesión</h1>
-            <input type="email" id="email" placeholder="email" autocomplete="username">
-            <input type="password" id="password" placeholder="contraseña" autocomplete="current-password">
-            <div id="login-error"></div>
-            <button class="btn-primary" id="btn-login">Entrar</button>
-        </div>
-    </div>
+<!-- LOGIN -->
+<div id="login" class="wrap" style="display:none">
+  <div class="login-card">
+    <div class="brand" style="margin-bottom:18px"><div class="logo">4h</div>
+      <div><p class="title">Gestión de Diseño</p><p class="muted sm">4housing · acceso interno</p></div></div>
+    <h1>Iniciar sesión</h1>
+    <input type="email" id="email" placeholder="email" autocomplete="username">
+    <input type="password" id="password" placeholder="contraseña" autocomplete="current-password">
+    <div id="login-error"></div>
+    <button class="btn-primary" id="btn-login">Entrar</button>
+  </div>
+</div>
 
-    <!-- APP -->
-    <div id="app" class="wrap" style="display:none">
-        <div class="topbar">
-            <div class="brand">
-                <div class="logo">4h</div>
-                <div>
-                    <p class="title">Gestión de Diseño · 4housing</p>
-                    <p class="muted sm">Proyectos · hoja de ruta · auditoría IA</p>
-                </div>
-            </div>
-            <div class="right">
-                <span id="user-info"></span>
-                <button class="btn-link" id="logout">
-                    <i class="ti ti-logout"></i>
-                     Salir
-                </button>
-            </div>
-        </div>
-        <div class="nav">
-            <button class="navbtn" data-tab="proj">
-                <i class="ti ti-folder"></i>
-                 Proyectos
-            </button>
-            <button class="navbtn" data-tab="dash">
-                <i class="ti ti-layout-dashboard"></i>
-                 Dashboard
-            </button>
-            <button class="navbtn" data-tab="audit">
-                <i class="ti ti-robot"></i>
-                 Auditoría IA
-            </button>
-        </div>
-        <div id="screen"></div>
-    </div>
+<!-- APP -->
+<div id="app" class="wrap" style="display:none">
+  <div class="topbar">
+    <div class="brand"><div class="logo">4h</div>
+      <div><p class="title">Gestión de Diseño · 4housing</p><p class="muted sm">Proyectos · hoja de ruta · auditoría IA</p></div></div>
+    <div class="right"><span id="user-info"></span><button class="btn-link" id="logout"><i class="ti ti-logout"></i> Salir</button></div>
+  </div>
+  <div class="nav">
+    <button class="navbtn" data-tab="proj"><i class="ti ti-folder"></i> Proyectos</button>
+    <button class="navbtn" data-tab="dash"><i class="ti ti-layout-dashboard"></i> Dashboard</button>
+    <button class="navbtn" data-tab="audit"><i class="ti ti-robot"></i> Auditoría IA</button>
+  </div>
+  <div id="screen"></div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="js/config.js"></script>
-    <script src="js/app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
