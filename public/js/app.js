@@ -11,7 +11,7 @@ let TAREAS = [];        // tareas del proyecto abierto (planas)
 let tab = "proj";
 
 const esCoord = () => PERFIL && PERFIL.rol === "coordinador";
-const puedeEditar = () => PERFIL && ["coordinador", "disenio"].includes(PERFIL.rol);
+const puedeEditar = () => PERFIL && ["coordinador", "diseno"].includes(PERFIL.rol);
 
 const ESTADO_LBL = { sin_iniciar:"Sin iniciar", en_ejecucion:"En ejecución", terminado:"Terminado", pausado:"Pausado" };
 
