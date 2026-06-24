@@ -8,7 +8,8 @@ let PERFIL = null;
 let PROYECTOS = [];
 let activo = null;      // proyecto abierto
 let TAREAS = [];        // tareas del proyecto abierto (planas)
-let tab = "proj";
+let TAREAS_ALL = [];    // tareas de todos los proyectos (para el dashboard)
+let tab = "dash";
 
 const esCoord = () => PERFIL && PERFIL.rol === "coordinador";
 const puedeEditar = () => PERFIL && ["coordinador", "diseno"].includes(PERFIL.rol);
@@ -23,6 +24,7 @@ async function init() {
   $("#login").style.display = "none";
   $("#app").style.display = "flex";
   await cargarProyectos();
+  await cargarTareasTodas();
   render();
 }
 async function cargarPerfil(user) {
@@ -45,6 +47,10 @@ async function logout(){ await sb.auth.signOut(); location.reload(); }
 async function cargarProyectos() {
   const { data } = await sb.from("v_proyectos").select("*").order("creado_en",{ascending:false});
   PROYECTOS = data || [];
+}
+async function cargarTareasTodas() {
+  const { data } = await sb.from("tareas").select("*").eq("eliminada", false);
+  TAREAS_ALL = data || [];
 }
 async function cargarTareas(proyectoId) {
   const { data } = await sb.from("tareas").select("*")
@@ -301,14 +307,107 @@ function renderDash() {
   const enEj = PROYECTOS.filter(p=>p.estado==="en_ejecucion").length;
   const term = PROYECTOS.filter(p=>p.estado==="terminado").length;
   const prom = Math.round(PROYECTOS.reduce((a,p)=>a+(p.avance_pct||0),0)/t);
+
+  // mapa de proyecto activo (no terminado) para filtrar tareas relevantes
+  const proyById = {}; PROYECTOS.forEach(p=>proyById[p.id]=p);
+  const proyActivo = id => proyById[id] && proyById[id].estado !== "terminado";
+
+  // fechas
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const manana = new Date(hoy); manana.setDate(manana.getDate()+1);
+  const en7 = new Date(hoy); en7.setDate(en7.getDate()+7);
+  const fmtD = d => d.toISOString().slice(0,10);
+  const HOY = fmtD(hoy), MAN = fmtD(manana);
+
+  // hojas (tareas sin hijos) = las que realmente se ejecutan/tildan
+  const idsConHijos = new Set(TAREAS_ALL.filter(x=>x.parent_id).map(x=>x.parent_id));
+  const hojas = TAREAS_ALL.filter(x => !idsConHijos.has(x.id));
+
+  // ----- ALERTAS: vencidas y por vencer (tareas hoja, no cumplidas, en proyectos activos) -----
+  const pend = hojas.filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.fecha_fin);
+  const vencidas = pend.filter(x => x.fecha_fin < HOY);
+  const porVencer = pend.filter(x => x.fecha_fin >= HOY && new Date(x.fecha_fin) <= en7);
+
+  // ----- CARGA LABORAL: tareas pendientes asignadas por persona (proyectos activos) -----
+  const carga = {};
+  (window.RESPONSABLES||[]).forEach(r=>carga[r]=0);
+  hojas.filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.responsable)
+       .forEach(x => { carga[x.responsable] = (carga[x.responsable]||0)+1; });
+  const cargaArr = Object.entries(carga).sort((a,b)=>b[1]-a[1]);
+  const maxCarga = Math.max(1, ...cargaArr.map(c=>c[1]));
+
+  // ----- OBJETIVOS DEL DÍA: tareas con fecha (inicio o fin) hoy / mañana -----
+  const objHoy = hojas.filter(x => !x.cumplido && (x.fecha_inicio===HOY || x.fecha_fin===HOY));
+  const objMan = hojas.filter(x => !x.cumplido && (x.fecha_inicio===MAN || x.fecha_fin===MAN));
+
+  // tarjetas superiores
   const cards = [
-    ["En ejecución", enEj], ["Terminados", term],
-    ["Avance prom.", prom+"%"], ["Total proyectos", PROYECTOS.length],
-  ].map(([k,v])=>`<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+    ["Proyectos en ejecución", enEj, "var(--olive-deep)"],
+    ["Proyectos terminados", term, "var(--green)"],
+    ["Avance promedio", prom+"%", "var(--olive-deep)"],
+    ["Tareas en alerta", vencidas.length+porVencer.length, vencidas.length? "var(--red)":"var(--amber)"],
+  ].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v" style="color:${c}">${v}</div></div>`).join("");
+
+  // bloque alertas
+  const itemTarea = x => {
+    const p = proyById[x.proyecto_id]||{};
+    return `<div class="al-row" data-goto="${x.proyecto_id}">
+      <span class="al-name">${x.nombre}</span>
+      <span class="al-proy">${p.nombre||''}</span>
+      <span class="al-fecha">${x.fecha_fin||x.fecha_inicio||''}</span></div>`;
+  };
+  const alertasHTML = (vencidas.length||porVencer.length) ? `
+    ${vencidas.length?`<div class="al-grp"><div class="al-tit red">Vencidas (${vencidas.length})</div>${vencidas.map(itemTarea).join("")}</div>`:""}
+    ${porVencer.length?`<div class="al-grp"><div class="al-tit amber">Por vencer · 7 días (${porVencer.length})</div>${porVencer.map(itemTarea).join("")}</div>`:""}
+  ` : `<p class="empty">Sin tareas vencidas ni próximas a vencer.</p>`;
+
+  // bloque carga laboral (barras horizontales)
+  const cargaHTML = cargaArr.map(([persona,n])=>`
+    <div class="cl-row">
+      <span class="cl-name">${persona}</span>
+      <div class="cl-bar"><div class="cl-fill" style="width:${Math.round(n/maxCarga*100)}%"></div></div>
+      <span class="cl-num">${n}</span>
+    </div>`).join("") || '<p class="empty">Sin tareas asignadas.</p>';
+
+  // bloque objetivos del día / mañana
+  const objItem = x => {
+    const p = proyById[x.proyecto_id]||{};
+    return `<div class="al-row" data-goto="${x.proyecto_id}">
+      <span class="al-name">${x.nombre}</span>
+      <span class="al-proy">${p.nombre||''}</span>
+      <span class="al-fecha">${x.responsable||'—'}</span></div>`;
+  };
+  const objHTML = `
+    <div class="al-grp"><div class="al-tit">Hoy (${objHoy.length})</div>${objHoy.map(objItem).join("")||'<p class="empty sm">Nada planificado para hoy.</p>'}</div>
+    <div class="al-grp"><div class="al-tit">Mañana (${objMan.length})</div>${objMan.map(objItem).join("")||'<p class="empty sm">Nada planificado para mañana.</p>'}</div>`;
+
+  // avance por proyecto (clickeable)
   const filas = PROYECTOS.map(p=>`
-    <div class="dash-row"><span class="dr-n">${p.nombre}</span>${barra(p.avance_pct)}<span class="dr-p">${p.avance_pct}%</span></div>`).join("");
-  return `<div class="stats">${cards}</div>
-    <div class="card"><div class="card-h">Avance por proyecto</div><div class="card-b">${filas||'<p class="empty">Sin datos</p>'}</div></div>`;
+    <div class="dash-row clickable" data-goto="${p.id}">
+      <span class="dr-n">${p.nombre}</span>${barra(p.avance_pct)}<span class="dr-p">${p.avance_pct}%</span>
+      <svg class="dr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+    </div>`).join("");
+
+  return `
+    <div class="stats">${cards}</div>
+    <div class="dash-grid">
+      <div class="card">
+        <div class="card-h">Alertas de atraso</div>
+        <div class="card-b">${alertasHTML}</div>
+      </div>
+      <div class="card">
+        <div class="card-h">Carga laboral por persona</div>
+        <div class="card-b">${cargaHTML}</div>
+      </div>
+      <div class="card">
+        <div class="card-h">Objetivos según planificación</div>
+        <div class="card-b">${objHTML}</div>
+      </div>
+      <div class="card">
+        <div class="card-h">Avance por proyecto</div>
+        <div class="card-b">${filas||'<p class="empty">Sin datos</p>'}</div>
+      </div>
+    </div>`;
 }
 
 function renderAudit() {
@@ -347,7 +446,12 @@ function toast(msg){
 
 // ---------- BIND ----------
 function bind() {
-  document.querySelectorAll(".navbtn").forEach(b=>b.onclick=()=>{ if(b.dataset.tab==="proj") activo=null; tab=b.dataset.tab; render(); });
+  document.querySelectorAll(".navbtn").forEach(b=>b.onclick=async()=>{
+    if(b.dataset.tab==="proj") activo=null;
+    tab=b.dataset.tab;
+    if(tab==="dash"){ await cargarProyectos(); await cargarTareasTodas(); }
+    render();
+  });
   $("#logout") && ($("#logout").onclick = logout);
 
   const nuevo = $("#nuevo");
@@ -359,6 +463,14 @@ function bind() {
   });
   const volver = $("#volver");
   if (volver) volver.onclick = async()=>{ activo=null; await cargarProyectos(); render(); };
+
+  // clic en cualquier fila con data-goto (dashboard) -> abre la hoja de ruta del proyecto
+  document.querySelectorAll("[data-goto]").forEach(el=>el.onclick=async()=>{
+    const p = PROYECTOS.find(x=>x.id===el.dataset.goto);
+    if (!p) return;
+    activo = p; tab = "proj";
+    await cargarTareas(activo.id); render();
+  });
 
   document.querySelectorAll(".chk").forEach(b=>b.onclick=()=>{
     const t = TAREAS.find(x=>x.id===b.dataset.id); if(t) toggleCheck(t);
