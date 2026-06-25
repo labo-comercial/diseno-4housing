@@ -410,17 +410,159 @@ function renderDash() {
     </div>`;
 }
 
+// ============================================================
+// AUDITORÍA IA — sube el inventario.json (del parser), computa,
+// audita con Claude (Edge Function) y guarda en Supabase.
+// ============================================================
+let INVENTARIO = null;        // inventario.json cargado en memoria
+let AUDITORIAS = [];          // auditorías guardadas
+
+async function cargarAuditorias() {
+  const { data } = await sb.from("auditorias")
+    .select("id,nombre_modelo,resumen_rubros,informe_texto,estado,creado_en")
+    .order("creado_en", { ascending:false }).limit(20);
+  AUDITORIAS = data || [];
+}
+
+function fmtNum(n){ return (n ?? 0).toLocaleString("es-AR"); }
+
 function renderAudit() {
-  return `<div class="card">
-    <div class="card-h">Auditoría asistida por IA</div>
-    <div class="card-b">
-      <p class="help">Subí los planos (DXF / DWG / PDF) para detectar inconsistencias e interferencias.</p>
-      <div class="drop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg><p>Arrastrá los planos o hacé clic para subir</p></div>
-      <div class="hall hall-r"><b>Interferencia · Sanitaria vs Estructura</b><span>Cañería cruza correa PGC120 en módulo M2 sin pase.</span></div>
-      <div class="hall hall-a"><b>Inconsistencia · Capas</b><span>Columna sin bloque asignado en plano 01-01-07.</span></div>
-      <div class="hall hall-g"><b>Sin observaciones · Revestimientos</b><span>12 módulos verificados, m² consistente con cómputo.</span></div>
-      <p class="help" style="margin-top:10px">El motor que lee los DXF corre como servicio aparte; esta pantalla registra cargas y hallazgos.</p>
-    </div></div>`;
+  const editable = puedeEditar();
+
+  // --- bloque de carga ---
+  const dropHTML = editable ? `
+    <div class="drop" id="aud-drop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 20h16"/></svg>
+      <p><b>Arrastrá el inventario.json</b> o hacé clic para elegirlo</p>
+      <p class="help">Liviano (~100-200 KB). Lo genera el parser en tu compu. El DXF pesado no se sube.</p>
+    </div>
+    <input type="file" id="aud-file" accept="application/json,.json" style="display:none">
+  ` : `<p class="help">Tu rol es de solo lectura. Podés ver las auditorías guardadas abajo.</p>`;
+
+  // --- preview del cómputo (si hay inventario cargado) ---
+  let previewHTML = "";
+  if (INVENTARIO) {
+    const resumen = INVENTARIO.resumen_por_rubro || {};
+    const sinClas = INVENTARIO.piezas_sin_clasificar || [];
+    const filas = Object.entries(resumen).map(([r,d])=>`
+      <div class="dash-row">
+        <span class="dr-n">${r}</span>
+        <span class="help" style="flex:1">${fmtNum(d.tipos)} tipos · ${fmtNum(d.piezas)} piezas</span>
+        <span class="dr-p">${fmtNum(d.peso_kg)} kg</span>
+      </div>`).join("") || `<p class="empty">Sin piezas computadas. Cargá el diccionario en el parser.</p>`;
+
+    const warn = sinClas.length ? `
+      <div class="hall hall-a" style="margin-top:10px"><b>${fmtNum(sinClas.length)} tipos sin clasificar</b><span>Cargalos en el diccionario del parser para mejorar el cómputo.</span></div>` : "";
+
+    previewHTML = `
+      <div class="card" style="margin-top:16px">
+        <div class="card-h">Cómputo · ${INVENTARIO.meta?.archivo_origen || "modelo"}</div>
+        <div class="card-b">
+          ${filas}
+          ${warn}
+          <button class="btn" id="aud-run" style="margin-top:14px">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg>
+            Auditar con IA y guardar
+          </button>
+          <span class="help" id="aud-status" style="margin-left:10px"></span>
+          <div id="aud-result"></div>
+        </div>
+      </div>`;
+  }
+
+  // --- lista de auditorías guardadas ---
+  const listaHTML = AUDITORIAS.length ? AUDITORIAS.map(a=>{
+    const fecha = new Date(a.creado_en).toLocaleString("es-AR");
+    const rubros = a.resumen_rubros ? Object.keys(a.resumen_rubros).join(" · ") : "—";
+    return `<div class="dash-row" style="align-items:flex-start">
+      <div style="flex:1">
+        <b>${a.nombre_modelo||"modelo"}</b> <span class="badge badge-${a.estado==='completada'?'terminado':'sin_iniciar'}">${a.estado}</span>
+        <div class="help">${rubros}</div>
+        ${a.informe_texto?`<div class="help" style="margin-top:3px">${a.informe_texto}</div>`:""}
+      </div>
+      <span class="help">${fecha}</span>
+    </div>`;
+  }).join("") : `<p class="empty">Todavía no hay auditorías.</p>`;
+
+  return `
+    <div class="card">
+      <div class="card-h">Auditoría asistida por IA</div>
+      <div class="card-b">
+        <p class="help">Subí el <b>inventario.json</b> generado por el parser para computar y auditar el modelo.</p>
+        ${dropHTML}
+      </div>
+    </div>
+    ${previewHTML}
+    <div class="card" style="margin-top:16px">
+      <div class="card-h">Auditorías guardadas</div>
+      <div class="card-b">${listaHTML}</div>
+    </div>`;
+}
+
+function leerInventario(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const inv = JSON.parse(reader.result);
+      if (!inv.piezas_computadas) throw new Error("No parece un inventario válido (falta piezas_computadas).");
+      INVENTARIO = inv;
+      render();
+    } catch(e){ toast("No se pudo leer: " + e.message); }
+  };
+  reader.readAsText(file);
+}
+
+async function correrAuditoria() {
+  const status = $("#aud-status");
+  const btn = $("#aud-run");
+  const result = $("#aud-result");
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "Consultando a la IA…";
+  try {
+    // 1) Edge Function (key protegida del lado servidor)
+    const { data, error } = await sb.functions.invoke("auditoria-ia", {
+      body: { inventario: INVENTARIO }
+    });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    const h = data.hallazgos || {};
+
+    // 2) guardar en Supabase
+    if (status) status.textContent = "Guardando…";
+    const { error:insErr } = await sb.from("auditorias").insert({
+      nombre_modelo: INVENTARIO.meta?.archivo_origen || null,
+      inventario: INVENTARIO,
+      resumen_rubros: INVENTARIO.resumen_por_rubro || null,
+      hallazgos: h,
+      informe_texto: data.informe_texto || h.resumen || null,
+      estado: "completada"
+    });
+    if (insErr) throw insErr;
+
+    if (status) status.textContent = "✓ Completada y guardada.";
+    if (result) result.innerHTML = renderHallazgos(h);
+    await cargarAuditorias();
+  } catch(e){
+    if (status) status.textContent = "";
+    if (result) result.innerHTML = `<div class="hall hall-r"><b>Error</b><span>${e.message||e}</span></div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderHallazgos(h) {
+  const cls = { alta:"hall-r", media:"hall-a", baja:"hall-g" };
+  const items = (h.hallazgos||[]).map(x=>`
+    <div class="hall ${cls[x.severidad]||'hall-a'}">
+      <b>${(x.severidad||'—').toUpperCase()} · ${x.rubro||'General'}</b>
+      <span>${x.detalle||''}</span>
+      ${x.sugerencia?`<span style="opacity:.85">↳ ${x.sugerencia}</span>`:""}
+    </div>`).join("") || `<p class="help">Sin hallazgos relevantes.</p>`;
+  return `
+    <div style="margin-top:14px">
+      ${h.resumen?`<div class="motivo-info" style="margin-bottom:10px">${h.resumen}${h.completitud_estimada?` <b>· Completitud estimada: ${h.completitud_estimada}</b>`:""}</div>`:""}
+      ${items}
+    </div>`;
 }
 
 // ---------- HISTORIAL (modal) ----------
@@ -450,6 +592,7 @@ function bind() {
     if(b.dataset.tab==="proj") activo=null;
     tab=b.dataset.tab;
     if(tab==="dash"){ await cargarProyectos(); await cargarTareasTodas(); }
+    if(tab==="audit"){ await cargarAuditorias(); }
     render();
   });
   $("#logout") && ($("#logout").onclick = logout);
@@ -496,7 +639,19 @@ function bind() {
     await sb.from("proyectos").update({ estado: estadoSel.value }).eq("id", activo.id);
     await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id); render();
   };
-  const drop = $(".drop"); if (drop) drop.onclick = ()=> toast("Carga de planos: pendiente de conectar el motor IA");
+  // --- Auditoría IA ---
+  const audDrop = $("#aud-drop");
+  const audFile = $("#aud-file");
+  if (audDrop && audFile) {
+    audDrop.onclick = ()=> audFile.click();
+    audDrop.ondragover = (e)=>{ e.preventDefault(); audDrop.style.borderColor="var(--olive)"; };
+    audDrop.ondragleave = ()=>{ audDrop.style.borderColor=""; };
+    audDrop.ondrop = (e)=>{ e.preventDefault(); audDrop.style.borderColor="";
+      if (e.dataTransfer.files[0]) leerInventario(e.dataTransfer.files[0]); };
+    audFile.onchange = ()=>{ if (audFile.files[0]) leerInventario(audFile.files[0]); };
+  }
+  const audRun = $("#aud-run");
+  if (audRun) audRun.onclick = correrAuditoria;
 }
 
 // ---------- MODAL NUEVO PROYECTO ----------
