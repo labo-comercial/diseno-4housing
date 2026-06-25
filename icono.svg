@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#f3f1e6"/>
+  <text x="50%" y="50%" dy="0.07em" text-anchor="middle" dominant-baseline="middle"
+        font-family="Archivo, Arial, sans-serif" font-weight="700" font-size="300"
+        fill="#2f3a26">4h</text>
+</svg>
