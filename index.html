@@ -211,6 +211,21 @@ input,select,textarea{font-family:inherit}
 /* ---------- TOAST ---------- */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.al-dot{width:9px;height:9px;border-radius:50%;flex:none;margin-right:2px}
+.al-dot.rojo{background:var(--red)}
+.al-dot.amber{background:var(--amber)}
+.ficha-inputs{border:1px solid var(--line);border-radius:10px;margin-top:6px;overflow:hidden}
+.ficha-head{display:flex;align-items:center;gap:8px;padding:11px 13px;cursor:pointer;background:#fbfaf3;font-size:13px;color:#55534a;user-select:none}
+.ficha-head:hover{background:#f5f3e8}
+.fi-chev{width:15px;height:15px;transition:transform .15s}
+.fi-chev.open{transform:rotate(90deg)}
+.ficha-body{padding:6px 13px 13px;max-height:340px;overflow-y:auto}
+.fi-sec{font-size:11px;font-weight:700;color:var(--olive-deep);letter-spacing:.04em;text-transform:uppercase;margin:14px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--line)}
+.fi-sec:first-child{margin-top:4px}
+.fi-row{display:flex;align-items:center;gap:10px;padding:3px 0}
+.fi-lbl{font-size:12.5px;color:#55534a;flex:0 0 42%;min-width:0}
+.fi-row input{flex:1;border:1px solid var(--line-strong);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit}
+.fi-row input:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.15)}
 /* ---------- NUEVOS v3 ---------- */
 .rol-tag{font-size:10px;background:#e6efdd;color:var(--green);padding:2px 7px;border-radius:5px;font-weight:700;letter-spacing:.02em;margin-left:6px}
 .ia-tag{font-size:10px;background:#e3edf6;color:#2c5f86;padding:2px 7px;border-radius:5px;font-weight:700;margin-left:4px}
@@ -305,6 +320,14 @@ input,select,textarea{font-family:inherit}
       <div class="field"><label>Estado</label>
         <select id="n-estado"><option value="sin_iniciar">Sin iniciar</option><option value="en_ejecucion">En ejecución</option><option value="terminado">Terminado</option><option value="pausado">Pausado</option></select>
       </div>
+      <div class="ficha-inputs">
+        <div class="ficha-head" id="ficha-toggle">
+          <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          <b>Ficha descriptiva — datos de input</b>
+          <span class="help" style="margin-left:auto">Texto libre · opcional</span>
+        </div>
+        <div class="ficha-body" id="ficha-body" style="display:none"></div>
+      </div>
       <div class="merr" id="nuevo-err"></div>
     </div>
     <div class="modal-f">
@@ -353,6 +376,13 @@ input,select,textarea{font-family:inherit}
       <div class="field"><label>Nombre del proyecto</label><input type="text" id="e-nombre"></div>
       <div class="field"><label>Requisitos / Ficha descriptiva</label><textarea id="e-ficha"></textarea></div>
       <div class="field"><label>Plazo de entrega</label><input type="date" id="e-plazo"></div>
+      <div class="ficha-inputs">
+        <div class="ficha-head" id="efi-toggle">
+          <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          <b>Ficha descriptiva — datos de input</b>
+        </div>
+        <div class="ficha-body" id="efi-body" style="display:none"></div>
+      </div>
       <div class="merr" id="edit-err"></div>
     </div>
     <div class="modal-f">
@@ -418,6 +448,7 @@ input,select,textarea{font-family:inherit}
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
 <script src="js/plantilla.js"></script>
+<script src="js/campos_input.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
