@@ -211,6 +211,42 @@ input,select,textarea{font-family:inherit}
 /* ---------- TOAST ---------- */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+/* ---------- NUEVOS v3 ---------- */
+.rol-tag{font-size:10px;background:#e6efdd;color:var(--green);padding:2px 7px;border-radius:5px;font-weight:700;letter-spacing:.02em;margin-left:6px}
+.ia-tag{font-size:10px;background:#e3edf6;color:#2c5f86;padding:2px 7px;border-radius:5px;font-weight:700;margin-left:4px}
+.roles-asign{margin:10px 0 4px 36px;background:#fbfaf3;border:1px solid var(--line);border-radius:10px;padding:12px 14px;max-width:520px}
+.roles-asign.ro{background:#fff}
+.ra-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0}
+.ra-lbl{font-size:13px;font-weight:600;color:#55534a}
+.rol-sel{border:1px solid var(--line-strong);border-radius:8px;padding:7px 9px;font-size:12.5px;background:#fff;color:#55534a;font-weight:600;min-width:180px}
+.rol-sel:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18)}
+.ra-help{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px}
+.base-lbl{font-size:11px;color:var(--muted);margin-left:6px}
+.desv{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;margin-left:6px}
+.desv.ok{background:var(--greenbg);color:var(--green)}
+.desv.late{background:var(--redbg);color:var(--red)}
+.desv.early{background:#e3edf6;color:#2c5f86}
+.proy-actions{display:flex;gap:8px}
+.proy-actions .btn.sm{margin-bottom:0}
+.pc-actual{font-size:12.5px;color:#55534a;margin-top:7px;background:#fbfaf3;border-radius:7px;padding:5px 9px;display:inline-block}
+.pc-actual-lbl{color:var(--olive-deep);font-weight:700}
+.dr-actual{font-size:11.5px;color:var(--muted);margin-top:2px}
+.dr-actual.done{color:var(--green);font-weight:600}
+.aud-proy-wrap{margin-top:14px;display:flex;flex-direction:column;gap:5px}
+.aud-proy-lbl{font-size:12px;color:#55534a;font-weight:600}
+/* desvios / NC */
+.nc-row{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.nc-row:last-child{border-bottom:none}
+.nc-tipo{font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap;flex:none;margin-top:2px}
+.nc-tipo.desvio{background:var(--amberbg);color:var(--amber)}
+.nc-tipo.nc{background:var(--redbg);color:var(--red)}
+.nc-main{flex:1;min-width:0}
+.nc-estado{max-width:160px}
+.pie-wrap{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.pie{width:120px;height:120px;border-radius:50%;flex:none}
+.pie-leg{display:flex;flex-direction:column;gap:7px}
+.pl-row{font-size:13px;color:#55534a;display:flex;align-items:center;gap:8px}
+.pl-dot{width:11px;height:11px;border-radius:3px;flex:none}
 </style>
 </head>
 <body>
@@ -235,6 +271,7 @@ input,select,textarea{font-family:inherit}
     <nav>
       <button class="navbtn active" data-tab="dash"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg> Dashboard</button>
       <button class="navbtn" data-tab="proj"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg> Proyectos</button>
+      <button class="navbtn" data-tab="desvios"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg> Desvíos &amp; NC</button>
       <button class="navbtn" data-tab="audit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg> Auditoría IA</button>
     </nav>
     <div class="sp"></div>
@@ -301,6 +338,78 @@ input,select,textarea{font-family:inherit}
   <div class="modal" style="max-width:460px">
     <div class="modal-h"><h3>Historial de responsable</h3><button class="x" data-close="modal-hist">×</button></div>
     <div class="modal-b" id="hist-body"></div>
+  </div>
+</div>
+
+<!-- MODAL EDITAR PROYECTO -->
+<div class="modal-bg" id="modal-editar">
+  <div class="modal">
+    <div class="modal-h"><h3>Editar proyecto</h3><button class="x" data-close="modal-editar">×</button></div>
+    <div class="modal-b">
+      <div class="frow">
+        <div class="field"><label>Nro. IF</label><input type="text" id="e-if"></div>
+        <div class="field"><label>Cliente</label><input type="text" id="e-cliente"></div>
+      </div>
+      <div class="field"><label>Nombre del proyecto</label><input type="text" id="e-nombre"></div>
+      <div class="field"><label>Requisitos / Ficha descriptiva</label><textarea id="e-ficha"></textarea></div>
+      <div class="field"><label>Plazo de entrega</label><input type="date" id="e-plazo"></div>
+      <div class="merr" id="edit-err"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn ghost" data-close="modal-editar">Cancelar</button>
+      <button class="btn" id="editar-guardar">Guardar cambios</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DESVIO DE FECHA (planificacion) -->
+<div class="modal-bg" id="modal-fecha">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-h"><h3>Cambio de fecha planificada</h3><button class="x" id="df-cancelar">×</button></div>
+    <div class="modal-b">
+      <div class="motivo-info">
+        <div class="row"><b>Tarea:</b> <span id="df-tarea"></span></div>
+        <div class="row"><b>Campo:</b> <span id="df-campo"></span></div>
+        <div class="row"><b>De:</b> <span id="df-de"></span> → <b>A:</b> <span id="df-a"></span></div>
+      </div>
+      <div class="field"><label>Motivo del desvío (obligatorio)</label>
+        <select id="df-motivo" class="inp" style="width:100%">
+          <option value="">(elegí un motivo)</option>
+          <option>Planificacion</option>
+          <option>Cliente</option>
+          <option>Desarrollo</option>
+        </select>
+      </div>
+      <div class="field"><label>Detalle (opcional)</label><textarea id="df-detalle" placeholder="Aclaración del cambio…"></textarea></div>
+      <div class="merr" id="df-err"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn ghost" id="df-cancelar2" onclick="document.getElementById('modal-fecha').classList.remove('open');render()">Cancelar</button>
+      <button class="btn" id="df-guardar">Guardar cambio</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NUEVO DESVIO / NC -->
+<div class="modal-bg" id="modal-nc">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-h"><h3>Cargar desvío / no conformidad</h3><button class="x" data-close="modal-nc">×</button></div>
+    <div class="modal-b">
+      <div class="frow">
+        <div class="field"><label>Tipo</label>
+          <select id="nc-tipo" class="inp"><option value="desvio">Desvío de proyecto</option><option value="nc">No conformidad</option></select>
+        </div>
+        <div class="field"><label>Fecha de registro</label><input type="date" id="nc-fecha"></div>
+      </div>
+      <div class="field"><label>Título</label><input type="text" id="nc-titulo" placeholder="Resumen breve"></div>
+      <div class="field"><label>Descripción</label><textarea id="nc-desc"></textarea></div>
+      <div class="field"><label>Sector</label><input type="text" id="nc-sector" placeholder="Diseño y Desarrollo"></div>
+      <div class="merr" id="nc-err"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn ghost" data-close="modal-nc">Cancelar</button>
+      <button class="btn" id="nc-guardar">Cargar</button>
+    </div>
   </div>
 </div>
 
