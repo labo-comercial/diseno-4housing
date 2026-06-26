@@ -226,6 +226,8 @@ function abrirEditarProyecto(){
   $("#e-nombre").value = p.nombre||""; $("#e-ficha").value = p.ficha||"";
   $("#e-plazo").value = p.plazo_entrega||"";
   $("#edit-err").textContent = "";
+  renderFichaInputs("efi-body", p.inputs || {});
+  bindFichaToggle("efi-toggle", "efi-body");
   $("#modal-editar").classList.add("open");
 }
 async function guardarEdicionProyecto(){
@@ -233,7 +235,7 @@ async function guardarEdicionProyecto(){
   const nro=$("#e-if").value.trim(), cli=$("#e-cliente").value.trim(), nom=$("#e-nombre").value.trim();
   if (!nro||!cli||!nom){ $("#edit-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
   const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plazo_entrega:activo.plazo_entrega };
-  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plazo_entrega:$("#e-plazo").value||null };
+  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plazo_entrega:$("#e-plazo").value||null, inputs: leerFichaInputs("efi-body") };
   await sb.from("proyectos").update(campos).eq("id", activo.id);
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
@@ -494,6 +496,23 @@ function renderDetalle() {
   const rolesResumen = window.ROLES_PROYECTO.map(r=>
     `<div class="fld"><label>${r.label}</label><div class="val">${p[r.key]||'Sin asignar'}</div></div>`).join("");
 
+  // ficha de inputs cargada (solo los que tienen valor)
+  let fichaHTML = "";
+  if (window.CAMPOS_INPUT && p.inputs && Object.keys(p.inputs).length) {
+    const secs = window.CAMPOS_INPUT.map(sec=>{
+      const filas = sec.campos.filter(c=>p.inputs[c.key]).map(c=>
+        `<div class="fi-row"><span class="fi-lbl">${c.label}</span><span class="val">${p.inputs[c.key]}</span></div>`).join("");
+      return filas ? `<div class="fi-sec">${sec.seccion}</div>${filas}` : "";
+    }).join("");
+    fichaHTML = `<div class="ficha-inputs" style="margin-top:16px">
+      <div class="ficha-head" id="det-ficha-toggle">
+        <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+        <b>Ficha descriptiva — datos de input</b>
+      </div>
+      <div class="ficha-body" id="det-ficha-body" style="display:none">${secs}</div>
+    </div>`;
+  }
+
   $("#content").innerHTML = `
     <button class="btn ghost sm" id="volver">← Volver a proyectos</button>
     <div class="det-head">
@@ -514,8 +533,10 @@ function renderDetalle() {
       ${rolesResumen}
       <div class="fld fld-full"><label>Requisitos / Ficha descriptiva</label><div class="val">${p.ficha||'—'}</div></div>
     </div>
+    ${fichaHTML}
     <div class="hoja-ruta">${etapasHTML}</div>`;
   bind();
+  bindFichaToggle("det-ficha-toggle", "det-ficha-body");
 }
 
 function renderDash() {
@@ -539,6 +560,33 @@ function renderDash() {
   const idsConHijos = new Set(TAREAS_ALL.filter(x=>x.parent_id).map(x=>x.parent_id));
   const hojas = TAREAS_ALL.filter(x => !idsConHijos.has(x.id));
 
+  // ----- ALERTAS A NIVEL PROYECTO (performance de plazos) -----
+  // a) plazo de entrega vencido o proximo con avance bajo
+  // b) acumulado de dias de atraso de sus tareas vs linea base
+  const desvioProy = {}; // proyecto_id -> dias de atraso acumulado (solo positivos)
+  TAREAS_ALL.forEach(x=>{
+    if (!x.base_fin || !x.fecha_fin) return;
+    const d = Math.round((new Date(x.fecha_fin) - new Date(x.base_fin))/86400000);
+    if (d > 0) desvioProy[x.proyecto_id] = (desvioProy[x.proyecto_id]||0) + d;
+  });
+  const proyAlerta = PROYECTOS.filter(p => p.estado!=="terminado").map(p=>{
+    const diasAlPlazo = p.plazo_entrega ? Math.round((new Date(p.plazo_entrega)-hoy)/86400000) : null;
+    let nivel = null; // 'rojo' | 'amber'
+    let motivo = "";
+    if (diasAlPlazo !== null && diasAlPlazo < 0) { nivel="rojo"; motivo=`Plazo vencido hace ${Math.abs(diasAlPlazo)}d · ${p.avance_pct}%`; }
+    else if (diasAlPlazo !== null && diasAlPlazo <= 7 && p.avance_pct < 90) { nivel="amber"; motivo=`Entrega en ${diasAlPlazo}d con ${p.avance_pct}%`; }
+    else if ((desvioProy[p.id]||0) >= 5) { nivel="amber"; motivo=`+${desvioProy[p.id]}d de atraso vs. plan`; }
+    return nivel ? { p, nivel, motivo, diasAlPlazo, desvio: desvioProy[p.id]||0 } : null;
+  }).filter(Boolean).sort((a,b)=> (a.nivel==="rojo"?-1:1) - (b.nivel==="rojo"?-1:1));
+
+  const proyAlertaHTML = proyAlerta.length ? proyAlerta.map(a=>`
+    <div class="al-row" data-goto="${a.p.id}">
+      <span class="al-dot ${a.nivel}"></span>
+      <span class="al-name">${a.p.nombre}</span>
+      <span class="al-proy">${a.motivo}</span>
+      <span class="al-fecha">${a.p.plazo_entrega||'—'}</span>
+    </div>`).join("") : `<p class="empty">Todos los proyectos en plazo.</p>`;
+
   // ----- ALERTAS: vencidas y por vencer (tareas hoja, no cumplidas, en proyectos activos) -----
   const pend = hojas.filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.fecha_fin);
   const vencidas = pend.filter(x => x.fecha_fin < HOY);
@@ -557,9 +605,10 @@ function renderDash() {
   const objMan = hojas.filter(x => !x.cumplido && (x.fecha_inicio===MAN || x.fecha_fin===MAN));
 
   // tarjetas superiores
+  const proyRojos = proyAlerta.filter(a=>a.nivel==="rojo").length;
   const cards = [
     ["Proyectos en ejecución", enEj, "var(--olive-deep)"],
-    ["Proyectos terminados", term, "var(--green)"],
+    ["Proyectos en riesgo", proyAlerta.length, proyRojos? "var(--red)":(proyAlerta.length?"var(--amber)":"var(--green)")],
     ["Avance promedio", prom+"%", "var(--olive-deep)"],
     ["Tareas en alerta", vencidas.length+porVencer.length, vencidas.length? "var(--red)":"var(--amber)"],
   ].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v" style="color:${c}">${v}</div></div>`).join("");
@@ -610,6 +659,10 @@ function renderDash() {
 
   return `
     <div class="stats">${cards}</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-h">Performance de plazos · proyectos en riesgo</div>
+      <div class="card-b">${proyAlertaHTML}</div>
+    </div>
     <div class="dash-grid">
       <div class="card">
         <div class="card-h">Alertas de atraso</div>
@@ -942,7 +995,10 @@ function bind() {
   $("#logout") && ($("#logout").onclick = logout);
 
   const nuevo = $("#nuevo");
-  if (nuevo) nuevo.onclick = ()=> $("#modal-nuevo").classList.add("open");
+  if (nuevo) nuevo.onclick = ()=>{
+    renderFichaInputs("ficha-body", {});
+    $("#modal-nuevo").classList.add("open");
+  };
 
   document.querySelectorAll(".proj-card").forEach(c=>c.onclick=async()=>{
     activo = PROYECTOS.find(p=>p.id===c.dataset.id);
@@ -1009,6 +1065,47 @@ function bind() {
   if (audRun) audRun.onclick = correrAuditoria;
 }
 
+// ---------- FICHA DE INPUTS (campos del Excel) ----------
+function renderFichaInputs(containerId, valores) {
+  const cont = document.getElementById(containerId);
+  if (!cont || !window.CAMPOS_INPUT) return;
+  const v = valores || {};
+  cont.innerHTML = window.CAMPOS_INPUT.map(sec=>`
+    <div class="fi-sec">${sec.seccion}</div>
+    ${sec.campos.map(c=>{
+      if (c.opciones && c.opciones.length) {
+        return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
+          <select class="fi-input" data-key="${c.key}">
+            <option value="">(sin completar)</option>
+            ${c.opciones.map(o=>`<option ${v[c.key]===o?'selected':''}>${o}</option>`).join("")}
+          </select></div>`;
+      }
+      return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
+        <input type="text" class="fi-input" data-key="${c.key}" value="${(v[c.key]||'').replace(/"/g,'&quot;')}" placeholder="—"></div>`;
+    }).join("")}
+  `).join("");
+}
+function leerFichaInputs(containerId) {
+  const cont = document.getElementById(containerId);
+  if (!cont) return {};
+  const out = {};
+  cont.querySelectorAll(".fi-input").forEach(el=>{
+    const val = (el.value||"").trim();
+    if (val) out[el.dataset.key] = val;
+  });
+  return out;
+}
+function bindFichaToggle(toggleId, bodyId) {
+  const tgl = document.getElementById(toggleId);
+  const body = document.getElementById(bodyId);
+  if (!tgl || !body) return;
+  tgl.onclick = ()=>{
+    const open = body.style.display !== "none";
+    body.style.display = open ? "none" : "block";
+    tgl.querySelector(".fi-chev")?.classList.toggle("open", !open);
+  };
+}
+
 // ---------- MODAL NUEVO PROYECTO ----------
 function bindModales() {
   $("#nuevo-guardar").onclick = async()=>{
@@ -1018,7 +1115,8 @@ function bindModales() {
     try {
       await crearProyecto({ nro_if:nro, cliente:cli, nombre:nom,
         ficha: $("#n-ficha").value.trim()||null, plazo_entrega: $("#n-plazo").value||null,
-        responsable: $("#n-resp").value||null, estado: $("#n-estado").value });
+        responsable: $("#n-resp").value||null, estado: $("#n-estado").value,
+        inputs: leerFichaInputs("ficha-body") });
       $("#modal-nuevo").classList.remove("open");
       ["n-if","n-cliente","n-nombre","n-ficha","n-plazo"].forEach(id=>$("#"+id).value="");
       tab="proj"; activo=null; render();
@@ -1037,6 +1135,8 @@ function bindModales() {
   const dfc = $("#df-cancelar"); if (dfc) dfc.onclick = ()=>{ $("#modal-fecha").classList.remove("open"); render(); };
   // nuevo desvio/NC
   const ncg = $("#nc-guardar"); if (ncg) ncg.onclick = crearDesvio;
+  // toggle de la ficha de inputs
+  bindFichaToggle("ficha-toggle", "ficha-body");
 }
 
 // fill responsables del modal nuevo
