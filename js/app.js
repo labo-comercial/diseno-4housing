@@ -11,8 +11,16 @@ let TAREAS = [];        // tareas del proyecto abierto (planas)
 let TAREAS_ALL = [];    // tareas de todos los proyectos (para el dashboard)
 let tab = "dash";
 
-const esCoord = () => PERFIL && PERFIL.rol === "coordinador";
-const puedeEditar = () => PERFIL && ["coordinador", "diseno"].includes(PERFIL.rol);
+// "Coordinacion" = admin + coordinador (los que pueden editar/eliminar proyectos,
+// cambiar responsables, cargar planificacion, etc.)
+const esCoord = () => PERFIL && ["admin", "coordinador"].includes(PERFIL.rol);
+const esAdmin = () => PERFIL && PERFIL.rol === "admin";
+// puedeEditar: quien puede operar la app mas alla de solo lectura
+const puedeEditar = () => PERFIL && ["admin", "coordinador", "diseno"].includes(PERFIL.rol);
+// soyResponsable: la persona logueada es el responsable de ESTA tarea
+const soyResponsable = (t) => PERFIL && t && t.responsable && t.responsable === PERFIL.nombre;
+// puedeTildar: solo el responsable de la tarea, o coordinacion
+const puedeTildar = (t) => esCoord() || soyResponsable(t);
 
 const ESTADO_LBL = { sin_iniciar:"Sin iniciar", en_ejecucion:"En ejecución", terminado:"Terminado", pausado:"Pausado" };
 
@@ -68,11 +76,18 @@ async function crearProyecto(campos) {
   const filas = [];
   function pushTarea(t, etapa, parentRef, orden, nivel) {
     const ref = crypto.randomUUID();
+    // responsable inicial: si la tarea tiene rol de proyecto y ese rol ya
+    // esta asignado en el proyecto, usamos esa persona; si no, el responsable fijo.
+    let resp = t.responsable || null;
+    if (t.rol && campos[t.rol]) resp = campos[t.rol];
     filas.push({
       _ref: ref, _parentRef: parentRef,
       proyecto_id: proy.id, etapa, orden, nivel,
       tipo: t.tipo === "modelado" ? "modelado" : "normal",
-      nombre: t.nombre, responsable: t.responsable || null, nota: t.nota || null,
+      nombre: t.nombre, responsable: resp, nota: t.nota || null,
+      rol: t.rol || null,
+      asigna_roles: !!t.asigna_roles,
+      auto_ia: !!t.auto_ia,
     });
     if (t.subitems) t.subitems.forEach((s,i)=>pushTarea(s, etapa, ref, i, "subitem"));
     if (t.rubros)   t.rubros.forEach((r,i)=>pushTarea(r, etapa, ref, i, "rubro"));
@@ -80,10 +95,11 @@ async function crearProyecto(campos) {
   window.PLANTILLA.forEach(et => et.tareas.forEach((t,i)=>pushTarea(t, et.etapa, null, i, "tarea")));
 
   // 2) insertar TODAS sin parent, pidiendo de vuelta el id real en el mismo orden.
-  //    Supabase devuelve las filas en el orden insertado, así que mapeamos por índice.
+  //    Supabase devuelve las filas en el orden insertado, asi que mapeamos por indice.
   const payload = filas.map(f => ({
     proyecto_id:f.proyecto_id, etapa:f.etapa, orden:f.orden, nivel:f.nivel,
-    tipo:f.tipo, nombre:f.nombre, responsable:f.responsable, nota:f.nota }));
+    tipo:f.tipo, nombre:f.nombre, responsable:f.responsable, nota:f.nota,
+    rol:f.rol, asigna_roles:f.asigna_roles, auto_ia:f.auto_ia }));
   const { data:inserted, error:e2 } = await sb.from("tareas").insert(payload).select("id");
   if (e2) throw e2;
 
@@ -102,6 +118,10 @@ async function crearProyecto(campos) {
   for (const padreId of Object.keys(porPadre)) {
     await sb.from("tareas").update({ parent_id: padreId }).in("id", porPadre[padreId]);
   }
+  // registro de creacion
+  await sb.from("historial_proyecto").insert({
+    proyecto_id: proy.id, proyecto_nombre: proy.nombre,
+    accion: "crear", detalle: { campos }, hecho_por: PERFIL.id });
   await cargarProyectos();
 }
 
@@ -122,12 +142,40 @@ function gateBloqueado(tarea) {
   return null;
 }
 async function toggleCheck(t) {
+  if (!puedeTildar(t)) {
+    toast(`Solo ${t.responsable||"el responsable asignado"} puede tildar esta tarea`);
+    return;
+  }
+  if (t.auto_ia) {
+    toast("Esta tarea se tilda sola cuando la auditoria IA no detecta inconsistencias ni interferencias");
+    return;
+  }
   const blo = gateBloqueado(t);
-  if (blo && !t.cumplido) { toast(`Bloqueado: completá primero ${blo}`); return; }
+  if (blo && !t.cumplido) { toast(`Bloqueado: completa primero ${blo}`); return; }
   const nuevo = !t.cumplido;
   await sb.from("tareas").update({ cumplido:nuevo, cumplido_en: nuevo?new Date().toISOString():null }).eq("id", t.id);
   await cargarTareas(activo.id); await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
+  render();
+}
+
+// ---------- ASIGNACION DE ROLES DE PROYECTO (cascada) ----------
+// Cuando la coordinadora asigna una persona a un rol, se guarda en el
+// proyecto y se propaga a TODAS las tareas (no eliminadas) que tengan
+// ese rol y aun no tengan un responsable distinto fijado manualmente.
+async function asignarRol(rolKey, persona) {
+  if (!esCoord()) { toast("Solo la coordinacion puede asignar responsables"); return; }
+  // 1) guardar en el proyecto
+  await sb.from("proyectos").update({ [rolKey]: persona || null }).eq("id", activo.id);
+  // 2) cascada: actualizar responsable de todas las tareas con ese rol
+  await sb.from("tareas").update({ responsable: persona || null })
+    .eq("proyecto_id", activo.id).eq("rol", rolKey).eq("eliminada", false);
+  await sb.from("historial_proyecto").insert({
+    proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion: "editar",
+    detalle: { rol: rolKey, asignado: persona }, hecho_por: PERFIL.id });
+  await cargarTareas(activo.id); await cargarProyectos();
+  activo = PROYECTOS.find(p=>p.id===activo.id);
+  toast(`${window.ROL_LABEL[rolKey]}: ${persona||"(sin asignar)"} - propagado`);
   render();
 }
 
@@ -143,6 +191,7 @@ function pedirMotivo(tarea, nuevo) {
   $("#modal-motivo").classList.add("open");
 }
 async function confirmarMotivo() {
+  if (!esCoord()) { toast("Solo la coordinacion puede cambiar responsables"); return; }
   const motivo = $("#motivo-text").value.trim();
   if (!motivo) { $("#motivo-err").textContent = "El motivo es obligatorio."; return; }
   const { tarea, nuevo } = pendienteResp;
@@ -168,9 +217,114 @@ async function eliminarTarea(t) {
   activo = PROYECTOS.find(p=>p.id===activo.id);
   render();
 }
-async function guardarFechas(t, ini, fin) {
-  await sb.from("tareas").update({ fecha_inicio: ini||null, fecha_fin: fin||null }).eq("id", t.id);
+
+// ---------- EDITAR / ELIMINAR PROYECTO (con registro) ----------
+function abrirEditarProyecto(){
+  if (!esCoord()) { toast("Solo la coordinacion puede editar proyectos"); return; }
+  const p = activo;
+  $("#e-if").value = p.nro_if||""; $("#e-cliente").value = p.cliente||"";
+  $("#e-nombre").value = p.nombre||""; $("#e-ficha").value = p.ficha||"";
+  $("#e-plazo").value = p.plazo_entrega||"";
+  $("#edit-err").textContent = "";
+  $("#modal-editar").classList.add("open");
+}
+async function guardarEdicionProyecto(){
+  if (!esCoord()) { toast("Solo la coordinacion puede editar proyectos"); return; }
+  const nro=$("#e-if").value.trim(), cli=$("#e-cliente").value.trim(), nom=$("#e-nombre").value.trim();
+  if (!nro||!cli||!nom){ $("#edit-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
+  const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plazo_entrega:activo.plazo_entrega };
+  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plazo_entrega:$("#e-plazo").value||null };
+  await sb.from("proyectos").update(campos).eq("id", activo.id);
+  await sb.from("historial_proyecto").insert({
+    proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
+    detalle: { antes, despues: campos }, hecho_por: PERFIL.id });
+  $("#modal-editar").classList.remove("open");
+  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id); render();
+  toast("Proyecto actualizado");
+}
+async function eliminarProyecto(){
+  if (!esCoord()) { toast("Solo la coordinacion puede eliminar proyectos"); return; }
+  if (!confirm(`Eliminar el proyecto "${activo.nombre}"? Esta accion no se puede deshacer.`)) return;
+  await sb.from("historial_proyecto").insert({
+    proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"eliminar",
+    detalle: { nro_if:activo.nro_if, cliente:activo.cliente }, hecho_por: PERFIL.id });
+  await sb.from("proyectos").delete().eq("id", activo.id);
+  activo = null; await cargarProyectos(); tab="proj"; render();
+  toast("Proyecto eliminado (queda registro)");
+}
+
+// ---------- CREAR DESVIO / NC manual ----------
+async function crearDesvio(){
+  if (!esCoord()) { toast("Solo la coordinacion puede cargar registros"); return; }
+  const titulo = $("#nc-titulo").value.trim();
+  if (!titulo){ $("#nc-err").textContent="El titulo es obligatorio."; return; }
+  await sb.from("desvios_nc").insert({
+    tipo: $("#nc-tipo").value,
+    titulo,
+    descripcion: $("#nc-desc").value.trim()||null,
+    sector: $("#nc-sector").value.trim()||null,
+    fecha_registro: $("#nc-fecha").value||null,
+    estado: "pendiente",
+  });
+  $("#modal-nc").classList.remove("open");
+  ["nc-titulo","nc-desc","nc-sector","nc-fecha"].forEach(id=>{ const e=$("#"+id); if(e) e.value=""; });
+  await cargarDesvios(); render();
+  toast("Registro cargado");
+}
+// ---------- PLANIFICACION: fechas con linea base + motivo de desvio ----------
+// Regla: la PRIMERA vez que se carga una fecha, queda como linea base (base_inicio/base_fin).
+// Cualquier cambio posterior exige justificar con motivo (Planificacion/Cliente/Desarrollo).
+// Solo la coordinacion puede tocar fechas.
+let pendienteFecha = null; // {tarea, campo, valorNuevo, valorViejo}
+
+function intentarGuardarFecha(t, campo, valorNuevo) {
+  if (!esCoord()) { toast("Solo la coordinacion carga la planificacion"); render(); return; }
+  const baseCol = campo === "inicio" ? "base_inicio" : "base_fin";
+  const vigCol  = campo === "inicio" ? "fecha_inicio" : "fecha_fin";
+  const valorViejo = t[vigCol] || null;
+  // sin linea base aun -> primera carga: guarda directo y fija base
+  if (!t[baseCol]) {
+    guardarFechaDirecto(t, campo, valorNuevo, true);
+    return;
+  }
+  // ya hay base y no cambia nada -> nada
+  if ((valorNuevo||null) === (valorViejo||null)) return;
+  // cambio sobre algo planificado -> pedir motivo
+  pendienteFecha = { tarea: t, campo, valorNuevo, valorViejo };
+  $("#df-tarea").textContent = t.nombre;
+  $("#df-campo").textContent = campo === "inicio" ? "Inicio" : "Fin";
+  $("#df-de").textContent = valorViejo || "(vacio)";
+  $("#df-a").textContent  = valorNuevo || "(vacio)";
+  $("#df-motivo").value = "";
+  $("#df-detalle").value = "";
+  $("#df-err").textContent = "";
+  $("#modal-fecha").classList.add("open");
+}
+
+async function guardarFechaDirecto(t, campo, valor, fijarBase) {
+  const vigCol  = campo === "inicio" ? "fecha_inicio" : "fecha_fin";
+  const baseCol = campo === "inicio" ? "base_inicio"  : "base_fin";
+  const upd = { [vigCol]: valor || null };
+  if (fijarBase) upd[baseCol] = valor || null;
+  await sb.from("tareas").update(upd).eq("id", t.id);
   await cargarTareas(activo.id);
+  render();
+}
+
+async function confirmarDesvioFecha() {
+  const motivo = $("#df-motivo").value;
+  if (!motivo) { $("#df-err").textContent = "Elegi un motivo."; return; }
+  const { tarea, campo, valorNuevo, valorViejo } = pendienteFecha;
+  const vigCol = campo === "inicio" ? "fecha_inicio" : "fecha_fin";
+  await sb.from("historial_fechas").insert({
+    tarea_id: tarea.id, proyecto_id: activo.id, campo,
+    fecha_anterior: valorViejo, fecha_nueva: valorNuevo || null,
+    motivo, detalle: $("#df-detalle").value.trim() || null,
+    cambiado_por: PERFIL.id });
+  await sb.from("tareas").update({ [vigCol]: valorNuevo || null }).eq("id", tarea.id);
+  $("#modal-fecha").classList.remove("open");
+  await cargarTareas(activo.id);
+  render();
 }
 
 // ---------- RENDER ----------
@@ -179,6 +333,7 @@ function render() {
   const c = $("#content");
   if (tab==="proj")  c.innerHTML = activo ? "" : renderLista(), activo && renderDetalle();
   if (tab==="dash")  c.innerHTML = renderDash();
+  if (tab==="desvios") c.innerHTML = renderDesvios();
   if (tab==="audit") c.innerHTML = renderAudit();
   bind();
 }
@@ -202,6 +357,7 @@ function renderLista() {
         <span class="badge badge-${p.estado}">${ESTADO_LBL[p.estado]}</span>
       </div>
       <div class="pc-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg> ${p.responsable||"Sin asignar"}</div>
+      ${p.tarea_actual?`<div class="pc-actual"><span class="pc-actual-lbl">Etapa ${p.etapa_actual||'—'} ·</span> ${p.tarea_actual}</div>`:''}
       <div class="pc-prog">${barra(p.avance_pct)}<span class="pc-pct">${p.avance_pct}%</span></div>
     </div>`).join("");
   if (!PROYECTOS.length) cards = `<p class="empty">No hay proyectos todavía. Creá uno con “Nuevo proyecto”.</p>`;
@@ -212,58 +368,104 @@ function nodoTarea(t, depth) {
   const hijos = hijosDe(t.id).sort((a,b)=>a.orden-b.orden);
   const tieneHijos = hijos.length > 0;
   const blo = gateBloqueado(t);
-  const editable = puedeEditar();
   const esGate = t.tipo === "modelado";
+  const puedoTildarEsta = puedeTildar(t);
 
   // check solo en hojas (sin hijos). Las que tienen hijos muestran progreso.
   let checkHTML = "";
   if (!tieneHijos) {
-    const lock = blo && !t.cumplido;
-    checkHTML = `<button class="chk ${t.cumplido?'on':''} ${lock?'lock':''}" data-id="${t.id}" ${lock?'title="Bloqueado: '+blo+'"':''}>
+    const gateLock = blo && !t.cumplido;
+    const permLock = !puedoTildarEsta && !t.cumplido;   // no soy responsable ni coordinacion
+    const iaLock   = t.auto_ia;                          // se tilda sola por IA
+    const lock = gateLock || permLock || iaLock;
+    let titleTxt = "";
+    if (gateLock) titleTxt = "Bloqueado: " + blo;
+    else if (iaLock) titleTxt = "Se tilda automaticamente con la auditoria IA";
+    else if (permLock) titleTxt = "Solo " + (t.responsable||"el responsable") + " puede tildar";
+    checkHTML = `<button class="chk ${t.cumplido?'on':''} ${lock&&!t.cumplido?'lock':''}" data-id="${t.id}" ${titleTxt?`title="${titleTxt}"`:''}>
       ${t.cumplido?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg>':(lock?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>':'')}
     </button>`;
   } else {
-    const tot = hijos.filter(h=>true).length;
+    const tot = hijos.length;
     const hechos = hijos.filter(h=>h.cumplido).length;
     checkHTML = `<span class="grp-count ${esGate?'gate':''}">${hechos}/${tot}</span>`;
   }
 
-  // selector de responsable
-  const respSel = editable
+  // responsable: SOLO la coordinacion puede cambiarlo (desplegable);
+  // el resto lo ve como texto. Si la tarea esta atada a un rol de proyecto,
+  // lo indicamos con una etiqueta.
+  const rolTag = t.rol ? `<span class="rol-tag" title="Asignado por rol de proyecto">${window.ROL_LABEL[t.rol]||t.rol}</span>` : "";
+  const respSel = esCoord()
     ? `<select class="resp-sel" data-id="${t.id}">
          <option value="">(sin asignar)</option>
          ${window.RESPONSABLES.map(r=>`<option ${t.responsable===r?'selected':''}>${r}</option>`).join("")}
        </select>`
     : `<span class="resp-ro">${t.responsable||"(sin asignar)"}</span>`;
 
-  // fechas por tarea (no en rubros para no saturar; sí en tareas y subitems)
-  const fechasHTML = (t.nivel !== "rubro")
-    ? `<div class="fechas">
-         <input type="date" class="f-ini" data-id="${t.id}" value="${t.fecha_inicio||''}" ${editable?'':'disabled'} title="Inicio">
-         <span class="f-sep">→</span>
-         <input type="date" class="f-fin" data-id="${t.id}" value="${t.fecha_fin||''}" ${editable?'':'disabled'} title="Fin">
-       </div>` : "";
+  // panel de asignacion de roles (solo en la tarea marcada asigna_roles)
+  let rolesHTML = "";
+  if (t.asigna_roles && esCoord()) {
+    rolesHTML = `<div class="roles-asign">
+      ${window.ROLES_PROYECTO.map(r=>`
+        <div class="ra-row">
+          <span class="ra-lbl">${r.label}</span>
+          <select class="rol-sel" data-rol="${r.key}">
+            <option value="">(sin asignar)</option>
+            ${window.RESPONSABLES.map(p=>`<option ${activo[r.key]===p?'selected':''}>${p}</option>`).join("")}
+          </select>
+        </div>`).join("")}
+      <div class="ra-help">Al asignar, cada persona se propaga a todas sus tareas en las etapas siguientes.</div>
+    </div>`;
+  } else if (t.asigna_roles) {
+    rolesHTML = `<div class="roles-asign ro">
+      ${window.ROLES_PROYECTO.map(r=>`<div class="ra-row"><span class="ra-lbl">${r.label}</span><span class="resp-ro">${activo[r.key]||"(sin asignar)"}</span></div>`).join("")}
+    </div>`;
+  }
+
+  // fechas por tarea con indicador de desvio vs linea base (no en rubros)
+  const editFechas = esCoord();
+  let fechasHTML = "";
+  if (t.nivel !== "rubro") {
+    const desvIni = desvioDias(t.base_inicio, t.fecha_inicio);
+    const desvFin = desvioDias(t.base_fin, t.fecha_fin);
+    const tagDesv = (d) => d===null ? "" : (d===0 ? `<span class="desv ok">en fecha</span>`
+      : d>0 ? `<span class="desv late">+${d}d</span>` : `<span class="desv early">${d}d</span>`);
+    fechasHTML = `<div class="fechas">
+         <input type="date" class="f-ini" data-id="${t.id}" value="${t.fecha_inicio||''}" ${editFechas?'':'disabled'} title="Inicio">
+         <span class="f-sep">-></span>
+         <input type="date" class="f-fin" data-id="${t.id}" value="${t.fecha_fin||''}" ${editFechas?'':'disabled'} title="Fin">
+         ${t.base_inicio||t.base_fin?`<span class="base-lbl" title="Linea base">base: ${t.base_inicio||'—'} / ${t.base_fin||'—'}</span>`:""}
+         ${tagDesv(desvFin)}
+       </div>`;
+  }
 
   const delBtn = esCoord()
     ? `<button class="del-tarea" data-id="${t.id}" title="Eliminar tarea">×</button>` : "";
-
   const histBtn = `<button class="hist-btn" data-id="${t.id}" title="Historial de responsable"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/></svg></button>`;
 
   let html = `
     <div class="tnode lvl-${t.nivel} ${esGate?'is-gate':''}" style="margin-left:${depth*18}px">
       <div class="tnode-row">
         ${checkHTML}
-        <div class="tnode-name">${t.nombre}${esGate?' <span class="gate-tag">gate · 6 rubros</span>':''}
+        <div class="tnode-name">${t.nombre}${esGate?' <span class="gate-tag">gate · 6 rubros</span>':''}${t.auto_ia?' <span class="ia-tag">auto · IA</span>':''} ${rolTag}
           ${t.nota?`<div class="tnode-note">${t.nota}</div>`:''}
         </div>
         ${respSel}
         ${histBtn}
         ${delBtn}
       </div>
+      ${rolesHTML}
       ${fechasHTML}
     </div>`;
   if (tieneHijos) html += hijos.map(h=>nodoTarea(h, depth+1)).join("");
   return html;
+}
+
+// desvio en dias entre linea base y fecha vigente (+ = atraso, - = adelanto)
+function desvioDias(base, vig){
+  if (!base || !vig) return null;
+  const a = new Date(base), b = new Date(vig);
+  return Math.round((b - a) / 86400000);
 }
 
 function renderDetalle() {
@@ -282,6 +484,16 @@ function renderDetalle() {
     ? `<select id="estado-sel" class="inp">${Object.keys(ESTADO_LBL).map(k=>`<option value="${k}" ${p.estado===k?'selected':''}>${ESTADO_LBL[k]}</option>`).join("")}</select>`
     : `<span>${ESTADO_LBL[p.estado]}</span>`;
 
+  const accionesProy = esCoord()
+    ? `<div class="proy-actions">
+         <button class="btn ghost sm" id="editar-proy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg> Editar</button>
+         <button class="btn ghost sm" id="eliminar-proy" style="color:var(--red)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg> Eliminar</button>
+       </div>` : "";
+
+  // resumen de roles de proyecto asignados
+  const rolesResumen = window.ROLES_PROYECTO.map(r=>
+    `<div class="fld"><label>${r.label}</label><div class="val">${p[r.key]||'Sin asignar'}</div></div>`).join("");
+
   $("#content").innerHTML = `
     <button class="btn ghost sm" id="volver">← Volver a proyectos</button>
     <div class="det-head">
@@ -289,13 +501,17 @@ function renderDetalle() {
         <h2 class="det-title">${p.nombre}</h2>
         <div class="det-sub">${p.nro_if} · ${p.cliente}</div>
       </div>
-      <div class="det-prog"><div class="det-pct">${p.avance_pct}%</div>${barra(p.avance_pct)}</div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        <div class="det-prog"><div class="det-pct">${p.avance_pct}%</div>${barra(p.avance_pct)}</div>
+        ${accionesProy}
+      </div>
     </div>
     <div class="det-fields">
       <div class="fld"><label>Cliente</label><div class="val">${p.cliente}</div></div>
       <div class="fld"><label>Plazo de entrega</label><div class="val">${p.plazo_entrega||'—'}</div></div>
       <div class="fld"><label>Responsable</label><div class="val">${p.responsable||'Sin asignar'}</div></div>
       <div class="fld"><label>Estado</label>${estadoSel}</div>
+      ${rolesResumen}
       <div class="fld fld-full"><label>Requisitos / Ficha descriptiva</label><div class="val">${p.ficha||'—'}</div></div>
     </div>
     <div class="hoja-ruta">${etapasHTML}</div>`;
@@ -381,10 +597,14 @@ function renderDash() {
     <div class="al-grp"><div class="al-tit">Hoy (${objHoy.length})</div>${objHoy.map(objItem).join("")||'<p class="empty sm">Nada planificado para hoy.</p>'}</div>
     <div class="al-grp"><div class="al-tit">Mañana (${objMan.length})</div>${objMan.map(objItem).join("")||'<p class="empty sm">Nada planificado para mañana.</p>'}</div>`;
 
-  // avance por proyecto (clickeable)
+  // avance por proyecto (clickeable) con tarea actual
   const filas = PROYECTOS.map(p=>`
     <div class="dash-row clickable" data-goto="${p.id}">
-      <span class="dr-n">${p.nombre}</span>${barra(p.avance_pct)}<span class="dr-p">${p.avance_pct}%</span>
+      <div style="flex:1;min-width:0">
+        <span class="dr-n">${p.nombre}</span>
+        ${p.tarea_actual?`<div class="dr-actual">Etapa ${p.etapa_actual||'—'} · ${p.tarea_actual}</div>`:'<div class="dr-actual done">Completado</div>'}
+      </div>
+      ${barra(p.avance_pct)}<span class="dr-p">${p.avance_pct}%</span>
       <svg class="dr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
     </div>`).join("");
 
@@ -411,9 +631,91 @@ function renderDash() {
 }
 
 // ============================================================
-// AUDITORÍA IA — sube el inventario.json (del parser), computa,
-// audita con Claude (Edge Function) y guarda en Supabase.
+// DESVIOS & NC D&D
+// Registros de desvios y no conformidades que le competen al sector.
+// Estados: pendiente / en_tratamiento / cerrado. Indicadores graficos.
+// Datos: carga manual y/o webhook desde SharePoint (Power Automate).
 // ============================================================
+let DESVIOS = [];
+
+async function cargarDesvios() {
+  const { data } = await sb.from("desvios_nc").select("*").order("creado_en",{ascending:false});
+  DESVIOS = data || [];
+}
+
+const EST_NC_LBL = { pendiente:"Pendiente", en_tratamiento:"En tratamiento", cerrado:"Cerrado" };
+
+async function cambiarEstadoDesvio(id, estado){
+  if (!esCoord()) { toast("Solo la coordinacion cambia el estado"); return; }
+  await sb.from("desvios_nc").update({ estado, actualizado_en:new Date().toISOString() }).eq("id", id);
+  await cargarDesvios(); render();
+}
+
+function renderDesvios(){
+  const tot = DESVIOS.length;
+  const porEstado = { pendiente:0, en_tratamiento:0, cerrado:0 };
+  const porTipo = { desvio:0, nc:0 };
+  DESVIOS.forEach(d=>{ porEstado[d.estado]=(porEstado[d.estado]||0)+1; porTipo[d.tipo]=(porTipo[d.tipo]||0)+1; });
+
+  // tarjetas
+  const cards = [
+    ["Total registros", tot, "var(--olive-deep)"],
+    ["Pendientes", porEstado.pendiente, porEstado.pendiente? "var(--red)":"var(--green)"],
+    ["En tratamiento", porEstado.en_tratamiento, "var(--amber)"],
+    ["Cerrados", porEstado.cerrado, "var(--green)"],
+  ].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v" style="color:${c}">${v}</div></div>`).join("");
+
+  // grafico de torta (estados) via conic-gradient
+  const segs = [
+    ["pendiente", porEstado.pendiente, "var(--red)"],
+    ["en_tratamiento", porEstado.en_tratamiento, "var(--amber)"],
+    ["cerrado", porEstado.cerrado, "var(--green)"],
+  ];
+  let acc = 0; const stops = [];
+  segs.forEach(([k,n,c])=>{ const frac = tot? n/tot*100:0; stops.push(`${c} ${acc}% ${acc+frac}%`); acc+=frac; });
+  const torta = tot ? `
+    <div class="pie-wrap">
+      <div class="pie" style="background:conic-gradient(${stops.join(",")})"></div>
+      <div class="pie-leg">
+        ${segs.map(([k,n,c])=>`<div class="pl-row"><span class="pl-dot" style="background:${c}"></span>${EST_NC_LBL[k]} <b>${n}</b></div>`).join("")}
+      </div>
+    </div>` : `<p class="empty">Sin registros.</p>`;
+
+  // barras por tipo
+  const maxTipo = Math.max(1, porTipo.desvio, porTipo.nc);
+  const barras = `
+    <div class="cl-row"><span class="cl-name">Desvios</span><div class="cl-bar"><div class="cl-fill" style="width:${porTipo.desvio/maxTipo*100}%"></div></div><span class="cl-num">${porTipo.desvio}</span></div>
+    <div class="cl-row"><span class="cl-name">No conformidades</span><div class="cl-bar"><div class="cl-fill" style="width:${porTipo.nc/maxTipo*100}%;background:var(--amber)"></div></div><span class="cl-num">${porTipo.nc}</span></div>`;
+
+  // tabla de registros
+  const filas = DESVIOS.map(d=>{
+    const estSel = esCoord()
+      ? `<select class="nc-estado inp" data-id="${d.id}">${Object.keys(EST_NC_LBL).map(k=>`<option value="${k}" ${d.estado===k?'selected':''}>${EST_NC_LBL[k]}</option>`).join("")}</select>`
+      : `<span class="badge badge-${d.estado==='cerrado'?'terminado':(d.estado==='pendiente'?'sin_iniciar':'pausado')}">${EST_NC_LBL[d.estado]}</span>`;
+    return `<div class="nc-row">
+      <span class="nc-tipo ${d.tipo}">${d.tipo==='nc'?'NC':'Desvío'}</span>
+      <div class="nc-main"><b>${d.titulo}</b>${d.descripcion?`<div class="help">${d.descripcion}</div>`:''}<div class="help">${d.sector||''} ${d.fecha_registro?'· '+d.fecha_registro:''}</div></div>
+      ${estSel}
+    </div>`;
+  }).join("") || `<p class="empty">Todavía no hay desvíos ni no conformidades cargados.</p>`;
+
+  const btnNuevo = esCoord()
+    ? `<button class="btn sm" id="nc-nuevo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg> Cargar registro</button>` : "";
+
+  return `
+    <div class="stats">${cards}</div>
+    <div class="dash-grid">
+      <div class="card"><div class="card-h">Distribución por estado</div><div class="card-b">${torta}</div></div>
+      <div class="card"><div class="card-h">Por tipo</div><div class="card-b">${barras}</div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h" style="display:flex;justify-content:space-between;align-items:center">Registros ${btnNuevo}</div>
+      <div class="card-b">${filas}</div>
+    </div>
+    <p class="help" style="margin-top:12px">Los registros llegan de los formularios FC-05.15 (desvíos) y FG-09.01 (no conformidades) de SharePoint. La integración automática se conecta vía Power Automate; por ahora podés cargarlos manualmente.</p>`;
+}
+
+
 let INVENTARIO = null;        // inventario.json cargado en memoria
 let AUDITORIAS = [];          // auditorías guardadas
 
@@ -460,6 +762,13 @@ function renderAudit() {
         <div class="card-b">
           ${filas}
           ${warn}
+          <div class="aud-proy-wrap">
+            <label class="aud-proy-lbl">Asociar a proyecto (para tildar Validación IA si está limpia):</label>
+            <select id="aud-proy" class="inp">
+              <option value="">(no asociar)</option>
+              ${PROYECTOS.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join("")}
+            </select>
+          </div>
           <button class="btn" id="aud-run" style="margin-top:14px">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg>
             Auditar con IA y guardar
@@ -516,6 +825,8 @@ async function correrAuditoria() {
   const status = $("#aud-status");
   const btn = $("#aud-run");
   const result = $("#aud-result");
+  const proySel = $("#aud-proy");
+  const proyId = proySel ? (proySel.value || null) : null;
   if (btn) btn.disabled = true;
   if (status) status.textContent = "Consultando a la IA…";
   try {
@@ -527,9 +838,13 @@ async function correrAuditoria() {
     if (data?.error) throw new Error(data.error);
     const h = data.hallazgos || {};
 
-    // 2) guardar en Supabase
+    // 2) determinar si esta LIMPIA (sin inconsistencias ni interferencias)
+    const limpia = auditoriaLimpia(h);
+
+    // 3) guardar en Supabase (asociada al proyecto si se eligio)
     if (status) status.textContent = "Guardando…";
     const { error:insErr } = await sb.from("auditorias").insert({
+      proyecto_id: proyId,
       nombre_modelo: INVENTARIO.meta?.archivo_origen || null,
       inventario: INVENTARIO,
       resumen_rubros: INVENTARIO.resumen_por_rubro || null,
@@ -539,7 +854,23 @@ async function correrAuditoria() {
     });
     if (insErr) throw insErr;
 
-    if (status) status.textContent = "✓ Completada y guardada.";
+    // 4) AUTO-TILDADO de "Validacion por asistente IA" SOLO si esta limpia
+    let msgIA = "";
+    if (proyId && limpia) {
+      const { data:tIA } = await sb.from("tareas").select("id,nombre")
+        .eq("proyecto_id", proyId).eq("auto_ia", true).eq("eliminada", false);
+      if (tIA && tIA.length) {
+        await sb.from("tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() })
+          .in("id", tIA.map(x=>x.id));
+        msgIA = " · Validacion IA tildada automaticamente.";
+        await cargarProyectos();
+        if (activo && activo.id===proyId){ await cargarTareas(proyId); activo=PROYECTOS.find(p=>p.id===proyId); }
+      }
+    } else if (proyId && !limpia) {
+      msgIA = " · Hay hallazgos: la Validacion IA NO se tilda.";
+    }
+
+    if (status) status.textContent = "✓ Completada y guardada." + msgIA;
     if (result) result.innerHTML = renderHallazgos(h);
     await cargarAuditorias();
   } catch(e){
@@ -548,6 +879,18 @@ async function correrAuditoria() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// Una auditoria esta "limpia" si no hay hallazgos de severidad alta/media
+// (inconsistencias) ni interferencias reportadas. Ajustable segun el esquema
+// que devuelva la Edge Function.
+function auditoriaLimpia(h){
+  if (!h) return false;
+  const hall = h.hallazgos || [];
+  const hayInconsistencias = hall.some(x => ["alta","media"].includes((x.severidad||"").toLowerCase()));
+  const hayInterferencias = (h.interferencias && h.interferencias.length > 0)
+    || hall.some(x => (x.tipo||"").toLowerCase().includes("interferencia"));
+  return !hayInconsistencias && !hayInterferencias;
 }
 
 function renderHallazgos(h) {
@@ -592,6 +935,7 @@ function bind() {
     if(b.dataset.tab==="proj") activo=null;
     tab=b.dataset.tab;
     if(tab==="dash"){ await cargarProyectos(); await cargarTareasTodas(); }
+    if(tab==="desvios"){ await cargarDesvios(); }
     if(tab==="audit"){ await cargarAuditorias(); }
     render();
   });
@@ -628,12 +972,23 @@ function bind() {
   document.querySelectorAll(".hist-btn").forEach(b=>b.onclick=()=> verHistorial(b.dataset.id));
   document.querySelectorAll(".f-ini").forEach(inp=>inp.onchange=()=>{
     const t=TAREAS.find(x=>x.id===inp.dataset.id);
-    guardarFechas(t, inp.value, t.fecha_fin);
+    intentarGuardarFecha(t, "inicio", inp.value);
   });
   document.querySelectorAll(".f-fin").forEach(inp=>inp.onchange=()=>{
     const t=TAREAS.find(x=>x.id===inp.dataset.id);
-    guardarFechas(t, t.fecha_inicio, inp.value);
+    intentarGuardarFecha(t, "fin", inp.value);
   });
+  // asignacion de roles de proyecto (cascada)
+  document.querySelectorAll(".rol-sel").forEach(s=>s.onchange=()=> asignarRol(s.dataset.rol, s.value));
+  // editar / eliminar proyecto
+  const edP = $("#editar-proy");
+  if (edP) edP.onclick = abrirEditarProyecto;
+  const elP = $("#eliminar-proy");
+  if (elP) elP.onclick = eliminarProyecto;
+  // estado de desvios/NC
+  document.querySelectorAll(".nc-estado").forEach(s=>s.onchange=()=> cambiarEstadoDesvio(s.dataset.id, s.value));
+  const ncNuevo = $("#nc-nuevo");
+  if (ncNuevo) ncNuevo.onclick = ()=> $("#modal-nc").classList.add("open");
   const estadoSel = $("#estado-sel");
   if (estadoSel) estadoSel.onchange = async()=>{
     await sb.from("proyectos").update({ estado: estadoSel.value }).eq("id", activo.id);
@@ -675,6 +1030,13 @@ function bindModales() {
   });
   $("#motivo-guardar").onclick = confirmarMotivo;
   $("#motivo-cancelar").onclick = ()=>{ $("#modal-motivo").classList.remove("open"); render(); };
+  // editar proyecto
+  const eg = $("#editar-guardar"); if (eg) eg.onclick = guardarEdicionProyecto;
+  // desvio de fecha (planificacion)
+  const dfg = $("#df-guardar"); if (dfg) dfg.onclick = confirmarDesvioFecha;
+  const dfc = $("#df-cancelar"); if (dfc) dfc.onclick = ()=>{ $("#modal-fecha").classList.remove("open"); render(); };
+  // nuevo desvio/NC
+  const ncg = $("#nc-guardar"); if (ncg) ncg.onclick = crearDesvio;
 }
 
 // fill responsables del modal nuevo
