@@ -488,23 +488,66 @@ async function aplicarPlanificacion({ silencioso } = {}) {
 }
 
 // Guarda los rubros a redibujar y deriva la categoria automaticamente.
+// NO re-renderiza el panel completo (eso destildaba el checkbox antes de que
+// llegara el dato de Supabase). Actualiza el estado local y refresca solo el
+// indicador de categoria en el DOM.
 async function guardarRubrosRedibujo(rubros) {
   if (!esCoord()) { toast("Solo la coordinacion edita el análisis general"); return; }
   const cat = window.categoriaPorRubros(rubros.length);
-  await sb.from("proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
-  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
-  render();
-  toast(`Categoría ${cat} · ${rubros.length} rubro(s) a redibujar`);
+  // 1) estado local inmediato (para que el render siguiente no pise los checks)
+  if (activo) { activo.rubros_redibujar = rubros; activo.categoria = cat; }
+  // 2) refrescar solo el badge/info de categoria, sin tocar los checkboxes
+  actualizarIndicadorCategoria(cat, rubros.length);
+  // 3) persistir en segundo plano
+  try {
+    await sb.from("proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
+    // sincronizar la copia en PROYECTOS sin re-render
+    const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
+    if (ix>=0){ PROYECTOS[ix].rubros_redibujar = rubros; PROYECTOS[ix].categoria = cat; }
+    toast(`Categoría ${cat} · ${rubros.length} rubro(s) a redibujar`);
+  } catch(e){
+    toast("No se pudo guardar: " + (e.message||e));
+  }
 }
 
-// Cambia el modo de la Etapa 3 (ia / bim / dwg).
+// actualiza en el DOM el badge de categoria y el texto, sin redibujar el panel
+function actualizarIndicadorCategoria(cat, n){
+  const totalCat = { 1:20, 2:15, 3:10 }[cat];
+  document.querySelectorAll(".ag-cat-b").forEach((el,i)=>{
+    el.classList.toggle("on", (i+1)===cat);
+  });
+  const info = document.querySelector(".ag-cat-info");
+  if (info) info.innerHTML = `Categoría <b>${cat}</b> · ${totalCat} días hábiles · ${n} rubro(s)`;
+}
+
+// Cambia el modo de la Etapa 3 (ia / bim / dwg) y recalcula las fechas.
 async function guardarModoEtapa3(modo) {
   if (!esCoord()) { toast("Solo la coordinacion edita el modo de documentación"); return; }
-  await sb.from("proyectos").update({ modo_etapa3: modo }).eq("id", activo.id);
-  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
-  render();
+  if (activo) activo.modo_etapa3 = modo;
+  // resaltar la opcion elegida en el DOM
+  document.querySelectorAll(".m3-opt").forEach(el=>{
+    const r = el.querySelector(".m3-radio");
+    el.classList.toggle("on", r && r.value===modo);
+  });
   const lbl = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).label || modo;
-  toast(`Etapa 3: ${lbl}`);
+  const dias = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).dias_total;
+  try {
+    await sb.from("proyectos").update({ modo_etapa3: modo }).eq("id", activo.id);
+    const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
+    if (ix>=0) PROYECTOS[ix].modo_etapa3 = modo;
+  } catch(e){
+    toast("No se pudo guardar: " + (e.message||e));
+    return;
+  }
+  // ¿hay ancla? (fin de Etapa 1 cargado). Si sí, recalculamos las fechas para
+  // que el nuevo modo "sume" los días en la Etapa 3 sin tener que ir al botón.
+  const hayAncla = TAREAS.some(t=>t.etapa===1 && t.fecha_fin);
+  if (hayAncla) {
+    await aplicarPlanificacion({ silencioso:true });
+    toast(`Etapa 3: ${lbl} · ${dias} día${dias>1?'s':''} hábil${dias>1?'es':''} · fechas recalculadas`);
+  } else {
+    toast(`Etapa 3: ${lbl}. Cargá el fin de la Etapa 1 y recalculá para aplicar los días.`);
+  }
 }
 
 // ---------- RENDER ----------
