@@ -1,6 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#f3f1e6"/>
-  <text x="50%" y="50%" dy="0.07em" text-anchor="middle" dominant-baseline="middle"
-        font-family="Archivo, Arial, sans-serif" font-weight="700" font-size="300"
-        fill="#2f3a26">4h</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#00AD69"/>
+  <g transform="translate(256 256)">
+    <path d="M0 -150 L129 -75 Q140 -69 140 -56 L140 56 Q140 69 129 75 L0 150 L-129 75 Q-140 69 -140 56 L-140 -56 Q-140 -69 -129 -75 Z" fill="#F4F2EA"/>
+    <path d="M6 -40 L122 -58 L122 60 L6 132 Z" fill="#00AD69"/>
+  </g>
 </svg>

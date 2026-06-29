@@ -4,9 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>4housing — Gestión de Diseño</title>
+<meta name="theme-color" content="#00ad69">
 <link rel="icon" href="favicon.ico" sizes="any">
 <link rel="icon" type="image/svg+xml" href="icono.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icon-16.png">
 <link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;500;600;700&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet">
@@ -262,6 +266,52 @@ input,select,textarea{font-family:inherit}
 .pie-leg{display:flex;flex-direction:column;gap:7px}
 .pl-row{font-size:13px;color:#55534a;display:flex;align-items:center;gap:8px}
 .pl-dot{width:11px;height:11px;border-radius:3px;flex:none}
+
+/* ---------- FICHA: campos compuestos (ubicacion / artefactos) ---------- */
+.fi-block{padding:8px 0;border-bottom:1px dashed var(--line)}
+.fi-block:last-child{border-bottom:none}
+.fi-lbl-full{display:block;font-size:12.5px;color:#55534a;font-weight:600;margin-bottom:5px}
+.fi-req{font-size:10px;font-weight:700;color:var(--amber);background:var(--amberbg);padding:1px 6px;border-radius:5px;letter-spacing:.02em;text-transform:uppercase;margin-left:4px}
+.fi-hint{font-size:11px;color:var(--muted);font-style:italic;margin-top:5px}
+.fi-sub{display:flex;flex-direction:column;gap:6px}
+.fi-sub.fi-sub-2{flex-direction:row}
+.fi-sub-in{border:1px solid var(--line-strong);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit;flex:1;min-width:0;background:#fbfaf4}
+.fi-sub-in:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.15);background:#fff}
+.fi-lista{display:flex;flex-direction:column;gap:7px}
+.fi-art-caja{display:flex;align-items:center;gap:7px}
+.fi-art-n{font-size:11px;font-weight:700;color:var(--muted);width:24px;flex:none}
+.fi-art-in{flex:1;min-width:0;border:1px solid var(--line-strong);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit;background:#fbfaf4}
+.fi-art-in:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.15);background:#fff}
+.fi-art-del{background:none;border:1px solid var(--line);border-radius:6px;width:28px;height:28px;color:#a8a596;font-size:16px;flex:none;line-height:1}
+.fi-art-del:hover{color:var(--red);border-color:#e8cfcc}
+.fi-add{margin-top:8px;background:#fff;border:1px dashed var(--line-strong);border-radius:7px;color:var(--olive-deep);font-size:12px;font-weight:600;padding:6px 11px}
+.fi-add:hover{background:var(--cream);border-color:var(--olive)}
+.fi-maps{color:var(--olive-deep);font-weight:600;font-size:12px;text-decoration:none;margin-left:6px}
+.fi-maps:hover{text-decoration:underline}
+
+/* ---------- ANALISIS GENERAL (rubros + categoria) y MODO ETAPA 3 ---------- */
+.ag-panel{margin:10px 0 4px 36px;background:#fbfaf3;border:1px solid var(--line);border-radius:10px;padding:14px 16px;max-width:560px}
+.ag-panel.ro{background:#fff}
+.ag-tit{font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;color:var(--olive-deep);margin-bottom:10px}
+.ag-rubros{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;margin-bottom:12px}
+@media(max-width:600px){.ag-rubros{grid-template-columns:1fr}}
+.ag-chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#55534a;cursor:pointer}
+.ag-chk input{width:16px;height:16px;accent-color:var(--olive-deep)}
+.ag-rubros-ro{font-size:13px;color:#55534a;margin-bottom:8px}
+.ag-cat{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.ag-cat-badges{display:flex;gap:6px}
+.ag-cat-b{font-size:11px;font-weight:700;padding:4px 10px;border-radius:30px;background:var(--chip);color:#6f6c60;opacity:.6}
+.ag-cat-b.on{background:var(--olive-deep);color:#fff;opacity:1}
+.ag-cat-info{font-size:12.5px;color:#55534a}
+.ag-rule{font-size:11px;color:var(--muted);font-style:italic;line-height:1.5}
+.m3-opts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
+@media(max-width:600px){.m3-opts{grid-template-columns:1fr}}
+.m3-opt{border:1.5px solid var(--line-strong);border-radius:10px;padding:11px 12px;cursor:pointer;display:flex;flex-direction:column;gap:3px;background:#fff;transition:.15s}
+.m3-opt:hover{border-color:var(--olive)}
+.m3-opt.on{border-color:var(--olive-deep);background:#f3f7ee;box-shadow:0 0 0 3px rgba(124,138,87,.12)}
+.m3-opt input{display:none}
+.m3-opt b{font-size:13.5px;color:var(--ink)}
+.m3-opt span{font-size:11.5px;color:var(--muted)}
 </style>
 </head>
 <body>
@@ -323,7 +373,7 @@ input,select,textarea{font-family:inherit}
       <div class="ficha-inputs">
         <div class="ficha-head" id="ficha-toggle">
           <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-          <b>Ficha descriptiva — datos de input</b>
+          <b>Requisitos / Ficha descriptiva</b>
           <span class="help" style="margin-left:auto">Texto libre · opcional</span>
         </div>
         <div class="ficha-body" id="ficha-body" style="display:none"></div>
@@ -379,7 +429,7 @@ input,select,textarea{font-family:inherit}
       <div class="ficha-inputs">
         <div class="ficha-head" id="efi-toggle">
           <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-          <b>Ficha descriptiva — datos de input</b>
+          <b>Requisitos / Ficha descriptiva</b>
         </div>
         <div class="ficha-body" id="efi-body" style="display:none"></div>
       </div>
