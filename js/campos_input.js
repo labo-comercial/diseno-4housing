@@ -1,23 +1,30 @@
 // ============================================================
 // 4housing - Gestion de Diseno
-// CAMPOS DE INPUT DEL PROYECTO (Ficha descriptiva)
+// CAMPOS DE INPUT DEL PROYECTO  ->  "Requisitos / Ficha descriptiva"
 // Generado desde Ficha_de_input_requeridos_para_proyectos.xlsx
-// Cada campo: { key, label }. La seccion agrupa en el formulario.
-// A futuro, un campo puede pasar de texto libre a desplegable
-// agregando "opciones: [...]" -> el front lo renderiza como <select>.
+//
+// Cada campo: { key, label, tipo? , hint? , opciones? }
+//   tipo (opcional):
+//     - undefined / "texto"  -> input de texto libre (default)
+//     - "ubicacion"          -> nombre del lugar + link de Google Maps
+//     - "artefacto"          -> exige marca y modelo (dos campos)
+//     - "lista_artefactos"   -> N cajas (varios modelos), agregar/quitar
+//   opciones: [...]          -> a futuro lo vuelve un <select>
+//
+// NOTA: el listado completo es por ahora de TEXTO LIBRE. Mas adelante
+// se migra a desplegables agregando "opciones" a cada campo.
 // ============================================================
 window.CAMPOS_INPUT = [
   {
     seccion: "GENERALES",
     campos: [
-      { key: "gene_ubicacion", label: "Ubicación" },
+      { key: "gene_ubicacion", label: "Ubicación", tipo: "ubicacion" },
       { key: "gene_cimentacion", label: "Cimentación" },
       { key: "gene_sistema", label: "Sistema" },
       { key: "gene_estructura_gral", label: "Estructura gral" },
       { key: "gene_aberturas_aluminio", label: "aberturas aluminio" },
       { key: "gene_aberturas_madera", label: "aberturas madera" },
       { key: "gene_aislacion_muros", label: "aislación muros" },
-      { key: "gene_aislacion_muros_2", label: "aislación muros" },
       { key: "gene_aislacion_cubierta", label: "aislación cubierta" },
       { key: "gene_pometina", label: "pometina" },
     ],
@@ -33,27 +40,33 @@ window.CAMPOS_INPUT = [
     ],
   },
   {
-    seccion: "ARTEFACTOS ELÉCTRICOS",
+    seccion: "ARTEFACTOS DE ILUMINACIÓN",
     campos: [
-      { key: "arte_electricos", label: "eléctricos" },
+      {
+        key: "ilum_artefactos",
+        label: "Artefactos de iluminación",
+        tipo: "lista_artefactos",
+        hint: "Detallá cada artefacto incluido (marca y modelo). Agregá una caja por cada modelo distinto.",
+      },
     ],
   },
   {
     seccion: "ARTEFACTOS SANITARIOS",
+    // Todos exigen MARCA y MODELO con precisión.
     campos: [
-      { key: "arte_inodoro", label: "inodoro" },
-      { key: "arte_bidet", label: "bidet" },
-      { key: "arte_griferia_bacha", label: "grifería bacha" },
-      { key: "arte_griferia_ducha", label: "grifería ducha" },
-      { key: "arte_griferia_bidet", label: "grifería bidet" },
-      { key: "arte_bacha", label: "bacha" },
-      { key: "arte_mesada", label: "mesada" },
-      { key: "arte_toallero", label: "toallero" },
-      { key: "arte_portarrollos", label: "portarrollos" },
-      { key: "arte_espejo", label: "espejo" },
-      { key: "arte_mampara_cortina", label: "mampara/cortina" },
-      { key: "arte_zocalo_plato_ducha", label: "zocalo/plato ducha" },
-      { key: "arte_extractor", label: "extractor" },
+      { key: "arte_inodoro", label: "inodoro", tipo: "artefacto" },
+      { key: "arte_bidet", label: "bidet", tipo: "artefacto" },
+      { key: "arte_griferia_bacha", label: "grifería bacha", tipo: "artefacto" },
+      { key: "arte_griferia_ducha", label: "grifería ducha", tipo: "artefacto" },
+      { key: "arte_griferia_bidet", label: "grifería bidet", tipo: "artefacto" },
+      { key: "arte_bacha", label: "bacha", tipo: "artefacto" },
+      { key: "arte_mesada", label: "mesada", tipo: "artefacto" },
+      { key: "arte_toallero", label: "toallero", tipo: "artefacto" },
+      { key: "arte_portarrollos", label: "portarrollos", tipo: "artefacto" },
+      { key: "arte_espejo", label: "espejo", tipo: "artefacto" },
+      { key: "arte_mampara_cortina", label: "mampara/cortina", tipo: "artefacto" },
+      { key: "arte_zocalo_plato_ducha", label: "zocalo/plato ducha", tipo: "artefacto" },
+      { key: "arte_extractor", label: "extractor", tipo: "artefacto" },
     ],
   },
   {
@@ -65,7 +78,6 @@ window.CAMPOS_INPUT = [
       { key: "reve_rev_exterior", label: "rev exterior" },
       { key: "reve_revestimiento_cielorraso", label: "revestimiento cielorraso" },
       { key: "reve_rev_cielorraso_bano", label: "rev cielorraso baño" },
-      { key: "reve_mueble_de_bano", label: "mueble de baño" },
     ],
   },
   {
@@ -95,6 +107,7 @@ window.CAMPOS_INPUT = [
   {
     seccion: "EQUIPAMIENTO GENERAL",
     campos: [
+      { key: "reve_mueble_de_bano", label: "mueble de baño" },
       { key: "equi_mueble_dormitorio", label: "mueble dormitorio" },
       { key: "equi_sillones", label: "sillones" },
       { key: "equi_estantes", label: "estantes" },

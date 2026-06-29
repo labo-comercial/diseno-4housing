@@ -71,54 +71,69 @@ async function cargarTareas(proyectoId) {
 async function crearProyecto(campos) {
   const { data:proy, error } = await sb.from("proyectos").insert(campos).select().single();
   if (error) throw error;
-  // 1) aplanar la plantilla en filas, cada una con un _ref local único
-  //    y _parentRef apuntando al _ref de su padre (sin colisiones).
+
+  // 1) aplanar la plantilla en filas, cada una con un _ref local único y
+  //    _parentRef apuntando al _ref de su padre. Guardamos la profundidad
+  //    (_depth) para insertar por capas: padres antes que hijos.
   const filas = [];
-  function pushTarea(t, etapa, parentRef, orden, nivel) {
+  function pushTarea(t, etapa, parentRef, orden, nivel, depth) {
     const ref = crypto.randomUUID();
     // responsable inicial: si la tarea tiene rol de proyecto y ese rol ya
     // esta asignado en el proyecto, usamos esa persona; si no, el responsable fijo.
     let resp = t.responsable || null;
     if (t.rol && campos[t.rol]) resp = campos[t.rol];
     filas.push({
-      _ref: ref, _parentRef: parentRef,
+      _ref: ref, _parentRef: parentRef, _depth: depth,
       proyecto_id: proy.id, etapa, orden, nivel,
       tipo: t.tipo === "modelado" ? "modelado" : "normal",
       nombre: t.nombre, responsable: resp, nota: t.nota || null,
       rol: t.rol || null,
+      slug: t.slug || null,
       asigna_roles: !!t.asigna_roles,
+      analisis_general: !!t.analisis_general,
+      selecciona_modo3: !!t.selecciona_modo3,
       auto_ia: !!t.auto_ia,
     });
-    if (t.subitems) t.subitems.forEach((s,i)=>pushTarea(s, etapa, ref, i, "subitem"));
-    if (t.rubros)   t.rubros.forEach((r,i)=>pushTarea(r, etapa, ref, i, "rubro"));
+    if (t.subitems) t.subitems.forEach((s,i)=>pushTarea(s, etapa, ref, i, "subitem", depth+1));
+    if (t.rubros)   t.rubros.forEach((r,i)=>pushTarea(r, etapa, ref, i, "rubro",   depth+1));
   }
-  window.PLANTILLA.forEach(et => et.tareas.forEach((t,i)=>pushTarea(t, et.etapa, null, i, "tarea")));
+  window.PLANTILLA.forEach(et => et.tareas.forEach((t,i)=>pushTarea(t, et.etapa, null, i, "tarea", 0)));
 
-  // 2) insertar TODAS sin parent, pidiendo de vuelta el id real en el mismo orden.
-  //    Supabase devuelve las filas en el orden insertado, asi que mapeamos por indice.
-  const payload = filas.map(f => ({
-    proyecto_id:f.proyecto_id, etapa:f.etapa, orden:f.orden, nivel:f.nivel,
-    tipo:f.tipo, nombre:f.nombre, responsable:f.responsable, nota:f.nota,
-    rol:f.rol, asigna_roles:f.asigna_roles, auto_ia:f.auto_ia }));
-  const { data:inserted, error:e2 } = await sb.from("tareas").insert(payload).select("id");
-  if (e2) throw e2;
-
-  // 3) _ref -> id real, por posición (1 a 1 con filas)
+  // 2) insertar por CAPAS de profundidad (0, luego 1, luego 2...). Al insertar
+  //    una capa ya conocemos el id real del padre (insertado en la capa
+  //    anterior), asi que mandamos el parent_id correcto en el propio INSERT.
+  //    NO dependemos del orden de retorno de un insert masivo (eso causaba
+  //    que se cruzaran los parent_id y desaparecieran tareas del arbol).
   const idDeRef = {};
-  filas.forEach((f,i)=>{ idDeRef[f._ref] = inserted[i].id; });
+  const maxDepth = Math.max(...filas.map(f => f._depth));
+  for (let d = 0; d <= maxDepth; d++) {
+    const capa = filas.filter(f => f._depth === d);
+    if (!capa.length) continue;
+    const payload = capa.map(f => ({
+      proyecto_id:f.proyecto_id, etapa:f.etapa, orden:f.orden, nivel:f.nivel,
+      tipo:f.tipo, nombre:f.nombre, responsable:f.responsable, nota:f.nota,
+      rol:f.rol, slug:f.slug, asigna_roles:f.asigna_roles,
+      analisis_general:f.analisis_general, selecciona_modo3:f.selecciona_modo3,
+      auto_ia:f.auto_ia,
+      parent_id: f._parentRef ? idDeRef[f._parentRef] : null,
+    }));
+    const { data:ins, error:eIns } = await sb.from("tareas").insert(payload)
+      .select("id, etapa, orden, nivel, parent_id");
+    if (eIns) throw eIns;
 
-  // 4) setear parent_id real. Agrupamos por parent para hacer pocas queries:
-  //    para cada padre, un solo update con .in(lista de hijos).
-  const porPadre = {};
-  filas.forEach(f => {
-    if (!f._parentRef) return;
-    const padreId = idDeRef[f._parentRef];
-    (porPadre[padreId] = porPadre[padreId] || []).push(idDeRef[f._ref]);
-  });
-  for (const padreId of Object.keys(porPadre)) {
-    await sb.from("tareas").update({ parent_id: padreId }).in("id", porPadre[padreId]);
+    // emparejar cada fila enviada con su id real por clave compuesta
+    // (etapa, orden, nivel, parent_id) — unica dentro de la capa. No usamos
+    // el orden de retorno.
+    capa.forEach(f => {
+      const pid = f._parentRef ? idDeRef[f._parentRef] : null;
+      const match = ins.find(r =>
+        r.etapa === f.etapa && r.orden === f.orden && r.nivel === f.nivel &&
+        (r.parent_id || null) === (pid || null) && !r._tomado);
+      if (match) { match._tomado = true; idDeRef[f._ref] = match.id; }
+    });
   }
-  // registro de creacion
+
+  // 3) registro de creacion
   await sb.from("historial_proyecto").insert({
     proyecto_id: proy.id, proyecto_nombre: proy.nombre,
     accion: "crear", detalle: { campos }, hecho_por: PERFIL.id });
@@ -127,7 +142,16 @@ async function crearProyecto(campos) {
 
 // ---------- TILDAR (con regla de bloqueo) ----------
 function hijosDe(id){ return TAREAS.filter(t => t.parent_id === id); }
+// true si TODAS las hojas de una etapa estan cumplidas
+function etapaCompleta(nEtapa){
+  const idsConHijos = new Set(TAREAS.filter(x=>x.parent_id).map(x=>x.parent_id));
+  const hojas = TAREAS.filter(t => t.etapa===nEtapa && !idsConHijos.has(t.id));
+  if (!hojas.length) return false;
+  return hojas.every(h => h.cumplido);
+}
 function gateBloqueado(tarea) {
+  // Regla de etapa: no se puede arrancar Etapa 3 sin la Etapa 2 completa.
+  if (tarea.etapa === 3 && !etapaCompleta(2)) return "Etapa 2 (completala primero)";
   // una tarea está bloqueada si existe, antes que ella (mismo padre/nivel),
   // un grupo de modelado con rubros sin completar.
   const hermanos = TAREAS.filter(t => t.parent_id === tarea.parent_id).sort((a,b)=>a.orden-b.orden);
@@ -234,6 +258,8 @@ async function guardarEdicionProyecto(){
   if (!esCoord()) { toast("Solo la coordinacion puede editar proyectos"); return; }
   const nro=$("#e-if").value.trim(), cli=$("#e-cliente").value.trim(), nom=$("#e-nombre").value.trim();
   if (!nro||!cli||!nom){ $("#edit-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
+  const faltan = validarFichaInputs("efi-body");
+  if (faltan.length){ $("#edit-err").textContent = "Completá marca Y modelo en: " + faltan.join(", "); return; }
   const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plazo_entrega:activo.plazo_entrega };
   const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plazo_entrega:$("#e-plazo").value||null, inputs: leerFichaInputs("efi-body") };
   await sb.from("proyectos").update(campos).eq("id", activo.id);
@@ -327,6 +353,158 @@ async function confirmarDesvioFecha() {
   $("#modal-fecha").classList.remove("open");
   await cargarTareas(activo.id);
   render();
+}
+
+// ============================================================
+// PLANIFICACION AUTOMATICA  (categoria -> dias habiles -> fechas)
+// ============================================================
+// Helpers de dias habiles (lun-vie; sin feriados por ahora).
+function aFecha(s){ if(!s) return null; const d=new Date(s+"T00:00:00"); return isNaN(d)?null:d; }
+function fmtFecha(d){ return d.toISOString().slice(0,10); }
+function esFinde(d){ const w=d.getDay(); return w===0||w===6; }
+// suma N dias habiles a una fecha (N>=0). dia 0 = la misma fecha si es habil,
+// o el proximo habil. Devuelve Date.
+function sumarHabiles(desde, n){
+  let d = new Date(desde);
+  // primero, asegurar que el punto de partida es habil
+  while (esFinde(d)) d.setDate(d.getDate()+1);
+  let restantes = n;
+  while (restantes > 0){
+    d.setDate(d.getDate()+1);
+    if (!esFinde(d)) restantes--;
+  }
+  return d;
+}
+// proximo dia habil estricto despues de 'd'
+function siguienteHabil(d){
+  const x = new Date(d);
+  do { x.setDate(x.getDate()+1); } while (esFinde(x));
+  return x;
+}
+
+// Lee la categoria guardada del proyecto activo (o la calcula desde rubros).
+function categoriaActiva(){
+  if (activo && activo.categoria) return activo.categoria;
+  const rub = (activo && activo.rubros_redibujar) || [];
+  return window.categoriaPorRubros(rub.length);
+}
+
+// Construye el plan de duraciones (slug -> dias habiles) para el proyecto,
+// combinando Etapa 2 (segun categoria) y Etapa 3 (segun modo).
+function planDuraciones(){
+  const cat = categoriaActiva();
+  const e2 = window.REPARTO_CATEGORIA[cat] || {};
+  const dur = { ...e2 };
+  // Etapa 3 segun modo
+  const modo = (activo && activo.modo_etapa3) || "ia";
+  if (modo === "dwg") {
+    dur["e3_ejecutiva"] = window.ETAPA3_DWG_EJECUTIVA;          // 19
+    // el "1 dia para todo el resto" se reparte: damos el dia al control;
+    // listado y computo quedan en 0 (mismo dia).
+    dur["e3_listado"] = 0; dur["e3_control"] = 1; dur["e3_computo"] = 0;
+  } else { // ia o bim: 1 dia total
+    dur["e3_ejecutiva"] = 1; dur["e3_listado"] = 0; dur["e3_control"] = 0; dur["e3_computo"] = 0;
+  }
+  return dur;
+}
+
+// Aplica la planificacion automatica: recalcula fecha_inicio/fecha_fin de las
+// tareas con slug conocido, encadenando una tras otra en dias habiles.
+//   - Etapa 1: no se toca (carga manual; define el arranque de Etapa 2).
+//   - Etapa 2: arranca el dia habil siguiente al fin de Etapa 1.
+//   - Etapa 3: arranca el dia habil siguiente al fin de Etapa 2.
+// La primera vez fija linea base; si ya habia base, igual reescribe (es la
+// coordinacion recalculando el plan) y deja registro en historial_fechas.
+async function aplicarPlanificacion({ silencioso } = {}) {
+  if (!esCoord()) { if(!silencioso) toast("Solo la coordinacion planifica"); return; }
+  if (!activo) return;
+  const dur = planDuraciones();
+
+  // fin de Etapa 1 = max fecha_fin de las tareas hoja de etapa 1
+  const e1 = TAREAS.filter(t=>t.etapa===1 && t.fecha_fin);
+  let finE1 = null;
+  e1.forEach(t=>{ const d=aFecha(t.fecha_fin); if(d && (!finE1 || d>finE1)) finE1=d; });
+  if (!finE1) {
+    if(!silencioso) toast("Cargá primero la fecha de fin de la Etapa 1 para encadenar el plan");
+    return;
+  }
+
+  const updates = []; // {id, inicio, fin}
+
+  // ---- ETAPA 2 (orden de la plantilla) ----
+  const ordenE2 = ["modelado_1","reunion_validacion_1","modelado_2","validacion_produccion","reunion_validacion_2","modelado_3","validacion_ia","presentacion_final"];
+  const bySlug = {};
+  TAREAS.forEach(t=>{ if(t.slug) bySlug[t.slug]=t; });
+
+  let cursor = siguienteHabil(finE1);   // inicio de Etapa 2
+  let finE2 = null;
+  ordenE2.forEach(slug=>{
+    const t = bySlug[slug]; if(!t) return;
+    const dias = dur[slug] ?? 1;
+    const ini = new Date(cursor);
+    const fin = sumarHabiles(ini, Math.max(0, dias-1)); // dias=1 -> mismo dia
+    updates.push({ id:t.id, inicio:fmtFecha(ini), fin:fmtFecha(fin) });
+    finE2 = fin;
+    cursor = siguienteHabil(fin);
+  });
+
+  // ---- ETAPA 3 (subitems de Documentacion ejecutiva) ----
+  if (finE2) {
+    const ordenE3 = ["e3_listado","e3_ejecutiva","e3_control","e3_computo"];
+    let cur3 = siguienteHabil(finE2);
+    // Para DWG la ejecutiva son 19 dias; las demas 0/1. Encadenamos igual,
+    // permitiendo dias=0 (misma fecha que la anterior).
+    let prevFin = null;
+    ordenE3.forEach(slug=>{
+      const t = bySlug[slug]; if(!t) return;
+      const dias = dur[slug] ?? 0;
+      let ini;
+      if (prevFin && dias===0) ini = new Date(prevFin);       // mismo dia
+      else ini = new Date(cur3);
+      const fin = sumarHabiles(ini, Math.max(0, dias-1>=0?dias-1:0));
+      const finReal = dias===0 ? new Date(ini) : fin;
+      updates.push({ id:t.id, inicio:fmtFecha(ini), fin:fmtFecha(finReal) });
+      prevFin = finReal;
+      cur3 = siguienteHabil(finReal);
+    });
+  }
+
+  // persistir: fija base si no existia; registra desvio si cambia
+  for (const u of updates) {
+    const t = TAREAS.find(x=>x.id===u.id); if(!t) continue;
+    const upd = { fecha_inicio:u.inicio, fecha_fin:u.fin };
+    if (!t.base_inicio) upd.base_inicio = u.inicio;
+    if (!t.base_fin)    upd.base_fin = u.fin;
+    await sb.from("tareas").update(upd).eq("id", t.id);
+  }
+  await sb.from("historial_proyecto").insert({
+    proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"editar",
+    detalle:{ planificacion:"auto", categoria:categoriaActiva(), modo_etapa3:(activo.modo_etapa3||"ia") }, hecho_por: PERFIL.id });
+
+  await cargarTareas(activo.id); await cargarProyectos();
+  activo = PROYECTOS.find(p=>p.id===activo.id);
+  if(!silencioso) toast(`Plan recalculado · Categoría ${categoriaActiva()}`);
+  render();
+}
+
+// Guarda los rubros a redibujar y deriva la categoria automaticamente.
+async function guardarRubrosRedibujo(rubros) {
+  if (!esCoord()) { toast("Solo la coordinacion edita el análisis general"); return; }
+  const cat = window.categoriaPorRubros(rubros.length);
+  await sb.from("proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
+  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
+  render();
+  toast(`Categoría ${cat} · ${rubros.length} rubro(s) a redibujar`);
+}
+
+// Cambia el modo de la Etapa 3 (ia / bim / dwg).
+async function guardarModoEtapa3(modo) {
+  if (!esCoord()) { toast("Solo la coordinacion edita el modo de documentación"); return; }
+  await sb.from("proyectos").update({ modo_etapa3: modo }).eq("id", activo.id);
+  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
+  render();
+  const lbl = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).label || modo;
+  toast(`Etapa 3: ${lbl}`);
 }
 
 // ---------- RENDER ----------
@@ -424,6 +602,59 @@ function nodoTarea(t, depth) {
     </div>`;
   }
 
+  // panel de ANALISIS GENERAL: rubros a redibujar -> categoria automatica
+  let analisisHTML = "";
+  if (t.analisis_general) {
+    const sel = (activo.rubros_redibujar || []);
+    const cat = activo.categoria || window.categoriaPorRubros(sel.length);
+    const totalCat = { 1:20, 2:15, 3:10 }[cat];
+    if (esCoord()) {
+      analisisHTML = `<div class="ag-panel">
+        <div class="ag-tit">Rubros a redibujar</div>
+        <div class="ag-rubros">
+          ${window.RUBROS_REDIBUJO.map(r=>`
+            <label class="ag-chk"><input type="checkbox" class="ag-rubro" value="${r}" ${sel.includes(r)?'checked':''}> ${r}</label>`).join("")}
+        </div>
+        <div class="ag-cat">
+          <div class="ag-cat-badges">
+            ${[1,2,3].map(c=>`<span class="ag-cat-b ${cat===c?'on':''}">Categoría ${c}</span>`).join("")}
+          </div>
+          <span class="ag-cat-info">Categoría <b>${cat}</b> · ${totalCat} días hábiles · ${sel.length} rubro(s)</span>
+        </div>
+        <div class="ag-rule">Regla: 3+ rubros → Cat 1 · 2 rubros → Cat 2 · 1 o menos → Cat 3. La categoría reparte los días en la Etapa 2.</div>
+        <button class="btn sm" id="ag-replan" style="margin-top:10px">Recalcular planificación (Etapas 2 y 3)</button>
+      </div>`;
+    } else {
+      analisisHTML = `<div class="ag-panel ro">
+        <div class="ag-tit">Rubros a redibujar</div>
+        <div class="ag-rubros-ro">${sel.length ? sel.join(" · ") : "(sin definir)"}</div>
+        <span class="ag-cat-info">Categoría <b>${cat}</b> · ${totalCat} días hábiles</span>
+      </div>`;
+    }
+  }
+
+  // panel de MODO ETAPA 3 (en la tarea "Documentacion ejecutiva" padre)
+  let modo3HTML = "";
+  if (t.selecciona_modo3) {
+    const modo = activo.modo_etapa3 || "ia";
+    if (esCoord()) {
+      modo3HTML = `<div class="ag-panel">
+        <div class="ag-tit">Modo de documentación ejecutiva</div>
+        <div class="m3-opts">
+          ${window.MODOS_ETAPA3.map(m=>`
+            <label class="m3-opt ${modo===m.key?'on':''}">
+              <input type="radio" name="modo3" class="m3-radio" value="${m.key}" ${modo===m.key?'checked':''}>
+              <b>${m.label}</b><span>${m.dias_total} día${m.dias_total>1?'s':''} hábil${m.dias_total>1?'es':''}</span>
+            </label>`).join("")}
+        </div>
+        <div class="ag-rule">DWG: 19 días de documentación ejecutiva + 1 para el resto de la etapa. IA y BIM: 1 día. La Etapa 3 arranca al cerrar la Etapa 2.</div>
+      </div>`;
+    } else {
+      const lbl = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).label || modo;
+      modo3HTML = `<div class="ag-panel ro"><div class="ag-tit">Modo de documentación</div><div class="ag-rubros-ro">${lbl}</div></div>`;
+    }
+  }
+
   // fechas por tarea con indicador de desvio vs linea base (no en rubros)
   const editFechas = esCoord();
   let fechasHTML = "";
@@ -457,6 +688,8 @@ function nodoTarea(t, depth) {
         ${delBtn}
       </div>
       ${rolesHTML}
+      ${analisisHTML}
+      ${modo3HTML}
       ${fechasHTML}
     </div>`;
   if (tieneHijos) html += hijos.map(h=>nodoTarea(h, depth+1)).join("");
@@ -501,13 +734,13 @@ function renderDetalle() {
   if (window.CAMPOS_INPUT && p.inputs && Object.keys(p.inputs).length) {
     const secs = window.CAMPOS_INPUT.map(sec=>{
       const filas = sec.campos.filter(c=>p.inputs[c.key]).map(c=>
-        `<div class="fi-row"><span class="fi-lbl">${c.label}</span><span class="val">${p.inputs[c.key]}</span></div>`).join("");
+        `<div class="fi-row"><span class="fi-lbl">${c.label}</span><span class="val">${fmtFichaValor(p.inputs[c.key])}</span></div>`).join("");
       return filas ? `<div class="fi-sec">${sec.seccion}</div>${filas}` : "";
     }).join("");
     fichaHTML = `<div class="ficha-inputs" style="margin-top:16px">
       <div class="ficha-head" id="det-ficha-toggle">
         <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
-        <b>Ficha descriptiva — datos de input</b>
+        <b>Requisitos / Ficha descriptiva</b>
       </div>
       <div class="ficha-body" id="det-ficha-body" style="display:none">${secs}</div>
     </div>`;
@@ -1036,6 +1269,16 @@ function bind() {
   });
   // asignacion de roles de proyecto (cascada)
   document.querySelectorAll(".rol-sel").forEach(s=>s.onchange=()=> asignarRol(s.dataset.rol, s.value));
+  // analisis general: rubros a redibujar -> categoria
+  const agRubros = document.querySelectorAll(".ag-rubro");
+  agRubros.forEach(c=>c.onchange=()=>{
+    const sel = Array.from(document.querySelectorAll(".ag-rubro")).filter(x=>x.checked).map(x=>x.value);
+    guardarRubrosRedibujo(sel);
+  });
+  const agReplan = $("#ag-replan");
+  if (agReplan) agReplan.onclick = ()=> aplicarPlanificacion();
+  // modo etapa 3
+  document.querySelectorAll(".m3-radio").forEach(r=>r.onchange=()=>{ if(r.checked) guardarModoEtapa3(r.value); });
   // editar / eliminar proyecto
   const edP = $("#editar-proy");
   if (edP) edP.onclick = abrirEditarProyecto;
@@ -1066,34 +1309,169 @@ function bind() {
 }
 
 // ---------- FICHA DE INPUTS (campos del Excel) ----------
+// Tipos soportados:
+//   (default)         texto libre
+//   "ubicacion"       nombre del lugar + link de Google Maps (objeto {nombre, maps})
+//   "artefacto"       marca + modelo, ambos requeridos (objeto {marca, modelo})
+//   "lista_artefactos" N items, cada uno marca+modelo (array de {marca, modelo})
+const esc = (s) => (s==null?'':String(s)).replace(/"/g,'&quot;').replace(/</g,'&lt;');
+
 function renderFichaInputs(containerId, valores) {
   const cont = document.getElementById(containerId);
   if (!cont || !window.CAMPOS_INPUT) return;
   const v = valores || {};
   cont.innerHTML = window.CAMPOS_INPUT.map(sec=>`
     <div class="fi-sec">${sec.seccion}</div>
-    ${sec.campos.map(c=>{
-      if (c.opciones && c.opciones.length) {
-        return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
-          <select class="fi-input" data-key="${c.key}">
-            <option value="">(sin completar)</option>
-            ${c.opciones.map(o=>`<option ${v[c.key]===o?'selected':''}>${o}</option>`).join("")}
-          </select></div>`;
-      }
-      return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
-        <input type="text" class="fi-input" data-key="${c.key}" value="${(v[c.key]||'').replace(/"/g,'&quot;')}" placeholder="—"></div>`;
-    }).join("")}
+    ${sec.campos.map(c=>renderFichaCampo(c, v[c.key])).join("")}
   `).join("");
+  bindFichaCampos(cont);
 }
+
+function renderFichaCampo(c, val) {
+  const tipo = c.tipo || "texto";
+  const hint = c.hint ? `<div class="fi-hint">${c.hint}</div>` : "";
+
+  if (tipo === "ubicacion") {
+    const o = (val && typeof val === "object") ? val : { nombre: typeof val === "string" ? val : "", maps: "" };
+    return `<div class="fi-block" data-key="${c.key}" data-tipo="ubicacion">
+      <span class="fi-lbl-full">${c.label}</span>
+      <div class="fi-sub">
+        <input type="text" class="fi-input fi-sub-in" data-sub="nombre" value="${esc(o.nombre)}" placeholder="Nombre del lugar / dirección">
+        <input type="url" class="fi-input fi-sub-in" data-sub="maps" value="${esc(o.maps)}" placeholder="Link de Google Maps (https://…)">
+      </div>${hint}
+    </div>`;
+  }
+
+  if (tipo === "artefacto") {
+    const o = (val && typeof val === "object") ? val : { marca: "", modelo: "" };
+    return `<div class="fi-block" data-key="${c.key}" data-tipo="artefacto">
+      <span class="fi-lbl-full">${c.label} <span class="fi-req">marca y modelo</span></span>
+      <div class="fi-sub fi-sub-2">
+        <input type="text" class="fi-input fi-sub-in" data-sub="marca" value="${esc(o.marca)}" placeholder="Marca">
+        <input type="text" class="fi-input fi-sub-in" data-sub="modelo" value="${esc(o.modelo)}" placeholder="Modelo">
+      </div>${hint}
+    </div>`;
+  }
+
+  if (tipo === "lista_artefactos") {
+    const arr = Array.isArray(val) ? val : [];
+    const items = (arr.length ? arr : [{ marca:"", modelo:"" }]);
+    return `<div class="fi-block" data-key="${c.key}" data-tipo="lista_artefactos">
+      <span class="fi-lbl-full">${c.label}</span>
+      <div class="fi-lista">
+        ${items.map((it,i)=>fichaArtefactoCaja(it,i)).join("")}
+      </div>
+      <button type="button" class="fi-add" data-add="${c.key}">+ Agregar artefacto</button>
+      ${hint}
+    </div>`;
+  }
+
+  if (c.opciones && c.opciones.length) {
+    return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
+      <select class="fi-input" data-key="${c.key}">
+        <option value="">(sin completar)</option>
+        ${c.opciones.map(o=>`<option ${val===o?'selected':''}>${o}</option>`).join("")}
+      </select></div>`;
+  }
+
+  return `<div class="fi-row"><span class="fi-lbl">${c.label}</span>
+    <input type="text" class="fi-input" data-key="${c.key}" value="${esc(val)}" placeholder="—"></div>`;
+}
+
+function fichaArtefactoCaja(it, i) {
+  it = it || { marca:"", modelo:"" };
+  return `<div class="fi-art-caja">
+    <span class="fi-art-n">#${i+1}</span>
+    <input type="text" class="fi-input fi-art-in" data-sub="marca" value="${esc(it.marca)}" placeholder="Marca">
+    <input type="text" class="fi-input fi-art-in" data-sub="modelo" value="${esc(it.modelo)}" placeholder="Modelo">
+    <button type="button" class="fi-art-del" title="Quitar">×</button>
+  </div>`;
+}
+
+// engancha los botones de agregar/quitar de las listas de artefactos
+function bindFichaCampos(cont) {
+  cont.querySelectorAll(".fi-add").forEach(b=>b.onclick=()=>{
+    const block = b.closest(".fi-block");
+    const lista = block.querySelector(".fi-lista");
+    const i = lista.querySelectorAll(".fi-art-caja").length;
+    const div = document.createElement("div");
+    div.innerHTML = fichaArtefactoCaja({marca:"",modelo:""}, i);
+    const caja = div.firstElementChild;
+    lista.appendChild(caja);
+    caja.querySelector(".fi-art-del").onclick = ()=> quitarArtefacto(caja);
+  });
+  cont.querySelectorAll(".fi-art-del").forEach(b=>b.onclick=()=> quitarArtefacto(b.closest(".fi-art-caja")));
+}
+function quitarArtefacto(caja){
+  const lista = caja.parentElement;
+  if (lista.querySelectorAll(".fi-art-caja").length <= 1) {
+    // dejar al menos una caja, solo limpiarla
+    caja.querySelectorAll("input").forEach(i=>i.value="");
+    return;
+  }
+  caja.remove();
+}
+
 function leerFichaInputs(containerId) {
   const cont = document.getElementById(containerId);
   if (!cont) return {};
   const out = {};
-  cont.querySelectorAll(".fi-input").forEach(el=>{
+  // campos simples (texto / select)
+  cont.querySelectorAll(".fi-row .fi-input").forEach(el=>{
     const val = (el.value||"").trim();
     if (val) out[el.dataset.key] = val;
   });
+  // bloques compuestos
+  cont.querySelectorAll(".fi-block").forEach(block=>{
+    const key = block.dataset.key, tipo = block.dataset.tipo;
+    if (tipo === "ubicacion" || tipo === "artefacto") {
+      const o = {};
+      block.querySelectorAll(".fi-sub-in").forEach(i=>{ const v=(i.value||"").trim(); if(v) o[i.dataset.sub]=v; });
+      if (Object.keys(o).length) out[key] = o;
+    } else if (tipo === "lista_artefactos") {
+      const arr = [];
+      block.querySelectorAll(".fi-art-caja").forEach(caja=>{
+        const o = {};
+        caja.querySelectorAll(".fi-art-in").forEach(i=>{ const v=(i.value||"").trim(); if(v) o[i.dataset.sub]=v; });
+        if (Object.keys(o).length) arr.push(o);
+      });
+      if (arr.length) out[key] = arr;
+    }
+  });
   return out;
+}
+
+// valida que los artefactos sanitarios tengan marca Y modelo (si se cargaron).
+// Devuelve [] si todo ok, o un array de labels incompletos.
+function validarFichaInputs(containerId) {
+  const cont = document.getElementById(containerId);
+  const faltan = [];
+  if (!cont || !window.CAMPOS_INPUT) return faltan;
+  const labelDe = {};
+  window.CAMPOS_INPUT.forEach(s=>s.campos.forEach(c=>labelDe[c.key]=c.label));
+  cont.querySelectorAll('.fi-block[data-tipo="artefacto"]').forEach(block=>{
+    const marca = block.querySelector('[data-sub="marca"]').value.trim();
+    const modelo = block.querySelector('[data-sub="modelo"]').value.trim();
+    if ((marca && !modelo) || (!marca && modelo)) faltan.push(labelDe[block.dataset.key] || block.dataset.key);
+  });
+  return faltan;
+}
+
+// formatea un valor de ficha (de cualquier tipo) para mostrarlo en el detalle
+function fmtFichaValor(val) {
+  if (val == null) return "";
+  if (typeof val === "string") return esc(val);
+  if (Array.isArray(val)) {
+    return val.map(o=>`${esc(o.marca||'')}${o.modelo?` · ${esc(o.modelo)}`:''}`).filter(Boolean).join("<br>");
+  }
+  if (typeof val === "object") {
+    if (val.maps || val.nombre) { // ubicacion
+      const n = esc(val.nombre||'');
+      return val.maps ? `${n} <a href="${esc(val.maps)}" target="_blank" rel="noopener" class="fi-maps">ver en Maps ↗</a>` : n;
+    }
+    if (val.marca || val.modelo) return `${esc(val.marca||'')}${val.modelo?` · ${esc(val.modelo)}`:''}`;
+  }
+  return esc(JSON.stringify(val));
 }
 function bindFichaToggle(toggleId, bodyId) {
   const tgl = document.getElementById(toggleId);
@@ -1112,6 +1490,11 @@ function bindModales() {
     const nro = $("#n-if").value.trim(), cli = $("#n-cliente").value.trim(), nom = $("#n-nombre").value.trim();
     if (!nro||!cli||!nom){ $("#nuevo-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
     $("#nuevo-guardar").disabled = true; $("#nuevo-err").textContent = "Creando…";
+    const faltan = validarFichaInputs("ficha-body");
+    if (faltan.length) {
+      $("#nuevo-err").textContent = "Completá marca Y modelo en: " + faltan.join(", ");
+      $("#nuevo-guardar").disabled = false; return;
+    }
     try {
       await crearProyecto({ nro_if:nro, cliente:cli, nombre:nom,
         ficha: $("#n-ficha").value.trim()||null, plazo_entrega: $("#n-plazo").value||null,
