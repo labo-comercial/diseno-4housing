@@ -248,6 +248,7 @@ function abrirEditarProyecto(){
   const p = activo;
   $("#e-if").value = p.nro_if||""; $("#e-cliente").value = p.cliente||"";
   $("#e-nombre").value = p.nombre||""; $("#e-ficha").value = p.ficha||"";
+  $("#e-inicio").value = p.plan_inicio||"";
   $("#e-plazo").value = p.plazo_entrega||"";
   $("#edit-err").textContent = "";
   renderFichaInputs("efi-body", p.inputs || {});
@@ -260,15 +261,20 @@ async function guardarEdicionProyecto(){
   if (!nro||!cli||!nom){ $("#edit-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
   const faltan = validarFichaInputs("efi-body");
   if (faltan.length){ $("#edit-err").textContent = "Completá marca Y modelo en: " + faltan.join(", "); return; }
-  const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plazo_entrega:activo.plazo_entrega };
-  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plazo_entrega:$("#e-plazo").value||null, inputs: leerFichaInputs("efi-body") };
+  const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plan_inicio:activo.plan_inicio, plazo_entrega:activo.plazo_entrega };
+  const inicioNuevo = $("#e-inicio").value||null;
+  const cambioInicio = inicioNuevo !== (activo.plan_inicio||null);
+  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plan_inicio:inicioNuevo, inputs: leerFichaInputs("efi-body") };
   await sb.from("proyectos").update(campos).eq("id", activo.id);
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
     detalle: { antes, despues: campos }, hecho_por: PERFIL.id });
   $("#modal-editar").classList.remove("open");
-  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id); render();
-  toast("Proyecto actualizado");
+  await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
+  await cargarTareas(activo.id);
+  if (cambioInicio && inicioNuevo) { await aplicarPlanificacion({ silencioso:true }); }
+  render();
+  toast(cambioInicio && inicioNuevo ? "Proyecto actualizado · plan recalculado" : "Proyecto actualizado");
 }
 async function eliminarProyecto(){
   if (!esCoord()) { toast("Solo la coordinacion puede eliminar proyectos"); return; }
@@ -408,82 +414,93 @@ function planDuraciones(){
   return dur;
 }
 
-// Aplica la planificacion automatica: recalcula fecha_inicio/fecha_fin de las
-// tareas con slug conocido, encadenando una tras otra en dias habiles.
-//   - Etapa 1: no se toca (carga manual; define el arranque de Etapa 2).
-//   - Etapa 2: arranca el dia habil siguiente al fin de Etapa 1.
-//   - Etapa 3: arranca el dia habil siguiente al fin de Etapa 2.
-// La primera vez fija linea base; si ya habia base, igual reescribe (es la
-// coordinacion recalculando el plan) y deja registro en historial_fechas.
+// Aplica la planificacion automatica encadenando en dias habiles desde la
+// FECHA DE INICIO del proyecto (plan_inicio).
+//   - Etapa 1: arranca en plan_inicio, dura `duracion_dias` de la plantilla (2).
+//   - Etapa 2: arranca al dia habil siguiente al fin de Etapa 1; reparte segun categoria.
+//   - Etapa 3: arranca al dia habil siguiente al fin de Etapa 2; dias segun modo
+//              (IA/BIM = 1 dia total; DWG = 20 = 19 ejecutiva + 1 resto).
+//   - El PLAZO DE ENTREGA del proyecto se completa solo = fin de Etapa 3.
+// La linea base (base_inicio/base_fin) de cada tarea se fija/actualiza con
+// estos valores planificados, que es contra lo que luego se mide atraso/adelanto.
 async function aplicarPlanificacion({ silencioso } = {}) {
   if (!esCoord()) { if(!silencioso) toast("Solo la coordinacion planifica"); return; }
   if (!activo) return;
   const dur = planDuraciones();
 
-  // fin de Etapa 1 = max fecha_fin de las tareas hoja de etapa 1
-  const e1 = TAREAS.filter(t=>t.etapa===1 && t.fecha_fin);
-  let finE1 = null;
-  e1.forEach(t=>{ const d=aFecha(t.fecha_fin); if(d && (!finE1 || d>finE1)) finE1=d; });
-  if (!finE1) {
-    if(!silencioso) toast("Cargá primero la fecha de fin de la Etapa 1 para encadenar el plan");
+  // ANCLA: fecha de inicio del proyecto
+  const inicio = aFecha(activo.plan_inicio);
+  if (!inicio) {
+    if(!silencioso) toast("Cargá primero la fecha de inicio del proyecto (Editar proyecto)");
     return;
   }
 
   const updates = []; // {id, inicio, fin}
-
-  // ---- ETAPA 2 (orden de la plantilla) ----
-  const ordenE2 = ["modelado_1","reunion_validacion_1","modelado_2","validacion_produccion","reunion_validacion_2","modelado_3","validacion_ia","presentacion_final"];
   const bySlug = {};
   TAREAS.forEach(t=>{ if(t.slug) bySlug[t.slug]=t; });
 
-  let cursor = siguienteHabil(finE1);   // inicio de Etapa 2
+  // ---- ETAPA 1: tareas hoja de etapa 1, dentro de la ventana de inicio ----
+  // La etapa 1 ocupa `duracion_dias` (plantilla) dias habiles desde el inicio.
+  const durE1 = (window.PLANTILLA.find(e=>e.etapa===1)||{}).duracion_dias || 2;
+  const iniE1 = new Date(inicio);
+  const finE1 = sumarHabiles(iniE1, Math.max(0, durE1-1));
+  // marcamos inicio/fin de etapa 1 en sus tareas hoja (todas en la misma ventana)
+  const idsConHijos = new Set(TAREAS.filter(x=>x.parent_id).map(x=>x.parent_id));
+  TAREAS.filter(t=>t.etapa===1 && !idsConHijos.has(t.id)).forEach(t=>{
+    updates.push({ id:t.id, inicio:fmtFecha(iniE1), fin:fmtFecha(finE1) });
+  });
+
+  // ---- ETAPA 2 (reparto por categoria) ----
+  const ordenE2 = ["modelado_1","reunion_validacion_1","modelado_2","validacion_produccion","reunion_validacion_2","modelado_3","validacion_ia","presentacion_final"];
+  let cursor = siguienteHabil(finE1);
   let finE2 = null;
   ordenE2.forEach(slug=>{
     const t = bySlug[slug]; if(!t) return;
     const dias = dur[slug] ?? 1;
     const ini = new Date(cursor);
-    const fin = sumarHabiles(ini, Math.max(0, dias-1)); // dias=1 -> mismo dia
+    const fin = sumarHabiles(ini, Math.max(0, dias-1));
     updates.push({ id:t.id, inicio:fmtFecha(ini), fin:fmtFecha(fin) });
     finE2 = fin;
     cursor = siguienteHabil(fin);
   });
 
-  // ---- ETAPA 3 (subitems de Documentacion ejecutiva) ----
+  // ---- ETAPA 3 (base estable: arranca al fin de Etapa 2, dias segun modo) ----
+  let finE3 = finE2;
   if (finE2) {
     const ordenE3 = ["e3_listado","e3_ejecutiva","e3_control","e3_computo"];
     let cur3 = siguienteHabil(finE2);
-    // Para DWG la ejecutiva son 19 dias; las demas 0/1. Encadenamos igual,
-    // permitiendo dias=0 (misma fecha que la anterior).
     let prevFin = null;
     ordenE3.forEach(slug=>{
       const t = bySlug[slug]; if(!t) return;
       const dias = dur[slug] ?? 0;
-      let ini;
-      if (prevFin && dias===0) ini = new Date(prevFin);       // mismo dia
-      else ini = new Date(cur3);
-      const fin = sumarHabiles(ini, Math.max(0, dias-1>=0?dias-1:0));
-      const finReal = dias===0 ? new Date(ini) : fin;
+      let ini = (prevFin && dias===0) ? new Date(prevFin) : new Date(cur3);
+      const finReal = dias===0 ? new Date(ini) : sumarHabiles(ini, dias-1);
       updates.push({ id:t.id, inicio:fmtFecha(ini), fin:fmtFecha(finReal) });
-      prevFin = finReal;
+      prevFin = finReal; finE3 = finReal;
       cur3 = siguienteHabil(finReal);
     });
   }
 
-  // persistir: fija base si no existia; registra desvio si cambia
+  // persistir tareas: la base se fija/actualiza con el plan (es la referencia de atraso)
   for (const u of updates) {
     const t = TAREAS.find(x=>x.id===u.id); if(!t) continue;
-    const upd = { fecha_inicio:u.inicio, fecha_fin:u.fin };
-    if (!t.base_inicio) upd.base_inicio = u.inicio;
-    if (!t.base_fin)    upd.base_fin = u.fin;
-    await sb.from("tareas").update(upd).eq("id", t.id);
+    await sb.from("tareas").update({
+      fecha_inicio:u.inicio, fecha_fin:u.fin,
+      base_inicio:u.inicio, base_fin:u.fin,
+    }).eq("id", t.id);
   }
+
+  // PLAZO DE ENTREGA automatico = fin de Etapa 3
+  const plazo = finE3 ? fmtFecha(finE3) : null;
+  await sb.from("proyectos").update({ plan_fin_f1:fmtFecha(finE1), plan_fin_f2:finE2?fmtFecha(finE2):null, plazo_entrega:plazo }).eq("id", activo.id);
+
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"editar",
-    detalle:{ planificacion:"auto", categoria:categoriaActiva(), modo_etapa3:(activo.modo_etapa3||"ia") }, hecho_por: PERFIL.id });
+    detalle:{ planificacion:"auto", inicio:activo.plan_inicio, categoria:categoriaActiva(), modo_etapa3:(activo.modo_etapa3||"ia"), plazo }, hecho_por: PERFIL.id });
 
   await cargarTareas(activo.id); await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
-  if(!silencioso) toast(`Plan recalculado · Categoría ${categoriaActiva()}`);
+  if(!silencioso) toast(`Plan recalculado · Cat ${categoriaActiva()} · entrega ${plazo||'—'}`);
   render();
 }
 
@@ -501,12 +518,23 @@ async function guardarRubrosRedibujo(rubros) {
   // 3) persistir en segundo plano
   try {
     await sb.from("proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
-    // sincronizar la copia en PROYECTOS sin re-render
     const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
     if (ix>=0){ PROYECTOS[ix].rubros_redibujar = rubros; PROYECTOS[ix].categoria = cat; }
-    toast(`Categoría ${cat} · ${rubros.length} rubro(s) a redibujar`);
   } catch(e){
     toast("No se pudo guardar: " + (e.message||e));
+    return;
+  }
+  // 4) si ya hay fecha de inicio, recalcular todo el plan automaticamente.
+  //    Debounce: esperamos a que el usuario deje de tildar (700ms) para no
+  //    recalcular en cada click y no provocar re-render que destilde.
+  if (activo.plan_inicio) {
+    clearTimeout(window.__replanTO);
+    window.__replanTO = setTimeout(async ()=>{
+      await aplicarPlanificacion({ silencioso:true });
+      toast(`Categoría ${cat} · plan recalculado`);
+    }, 700);
+  } else {
+    toast(`Categoría ${cat} · cargá la fecha de inicio para calcular el plan`);
   }
 }
 
@@ -803,7 +831,8 @@ function renderDetalle() {
     </div>
     <div class="det-fields">
       <div class="fld"><label>Cliente</label><div class="val">${p.cliente}</div></div>
-      <div class="fld"><label>Plazo de entrega</label><div class="val">${p.plazo_entrega||'—'}</div></div>
+      <div class="fld"><label>Fecha de inicio</label><div class="val">${p.plan_inicio||'—'}</div></div>
+      <div class="fld"><label>Plazo de entrega <span class="auto-tag">auto</span></label><div class="val">${p.plazo_entrega||'—'}</div></div>
       <div class="fld"><label>Responsable</label><div class="val">${p.responsable||'Sin asignar'}</div></div>
       <div class="fld"><label>Estado</label>${estadoSel}</div>
       ${rolesResumen}
@@ -889,6 +918,14 @@ function renderDash() {
     ["Tareas en alerta", vencidas.length+porVencer.length, vencidas.length? "var(--red)":"var(--amber)"],
   ].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v" style="color:${c}">${v}</div></div>`).join("");
 
+  // ----- ATRASOS REALES: tareas hoja cuya fecha vigente supera su linea base -----
+  // (mide el atraso contra el plan; la base de Etapa 3 ya es estable)
+  const atrasadas = hojas
+    .filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.base_fin && x.fecha_fin)
+    .map(x => ({ ...x, dias: Math.round((new Date(x.fecha_fin) - new Date(x.base_fin))/86400000) }))
+    .filter(x => x.dias > 0)
+    .sort((a,b)=> b.dias - a.dias);
+
   // bloque alertas
   const itemTarea = x => {
     const p = proyById[x.proyecto_id]||{};
@@ -897,10 +934,19 @@ function renderDash() {
       <span class="al-proy">${p.nombre||''}</span>
       <span class="al-fecha">${x.fecha_fin||x.fecha_inicio||''}</span></div>`;
   };
-  const alertasHTML = (vencidas.length||porVencer.length) ? `
+  const itemAtraso = x => {
+    const p = proyById[x.proyecto_id]||{};
+    return `<div class="al-row" data-goto="${x.proyecto_id}">
+      <span class="al-dot rojo"></span>
+      <span class="al-name">${x.nombre}</span>
+      <span class="al-proy">E${x.etapa} · ${p.nombre||''} · ${x.responsable||'sin asignar'}</span>
+      <span class="al-dias">+${x.dias}d</span></div>`;
+  };
+  const alertasHTML = (atrasadas.length||vencidas.length||porVencer.length) ? `
+    ${atrasadas.length?`<div class="al-grp"><div class="al-tit red">Atrasadas vs. plan (${atrasadas.length})</div>${atrasadas.map(itemAtraso).join("")}</div>`:""}
     ${vencidas.length?`<div class="al-grp"><div class="al-tit red">Vencidas (${vencidas.length})</div>${vencidas.map(itemTarea).join("")}</div>`:""}
     ${porVencer.length?`<div class="al-grp"><div class="al-tit amber">Por vencer · 7 días (${porVencer.length})</div>${porVencer.map(itemTarea).join("")}</div>`:""}
-  ` : `<p class="empty">Sin tareas vencidas ni próximas a vencer.</p>`;
+  ` : `<p class="empty">Sin atrasos ni tareas próximas a vencer.</p>`;
 
   // bloque carga laboral (barras horizontales)
   const cargaHTML = cargaArr.map(([persona,n])=>`
@@ -1540,11 +1586,11 @@ function bindModales() {
     }
     try {
       await crearProyecto({ nro_if:nro, cliente:cli, nombre:nom,
-        ficha: $("#n-ficha").value.trim()||null, plazo_entrega: $("#n-plazo").value||null,
+        ficha: $("#n-ficha").value.trim()||null, plan_inicio: $("#n-inicio").value||null,
         responsable: $("#n-resp").value||null, estado: $("#n-estado").value,
         inputs: leerFichaInputs("ficha-body") });
       $("#modal-nuevo").classList.remove("open");
-      ["n-if","n-cliente","n-nombre","n-ficha","n-plazo"].forEach(id=>$("#"+id).value="");
+      ["n-if","n-cliente","n-nombre","n-ficha","n-plazo","n-inicio"].forEach(id=>$("#"+id).value="");
       tab="proj"; activo=null; render();
     } catch(e){ $("#nuevo-err").textContent = e.message || "Error al crear."; }
     $("#nuevo-guardar").disabled = false;
