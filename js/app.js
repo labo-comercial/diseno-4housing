@@ -174,6 +174,10 @@ async function toggleCheck(t) {
     toast("Esta tarea se tilda sola cuando la auditoria IA no detecta inconsistencias ni interferencias");
     return;
   }
+  if (t.analisis_general) {
+    toast("Se completa sola: cargá la fecha de inicio y los rubros en el panel");
+    return;
+  }
   const blo = gateBloqueado(t);
   if (blo && !t.cumplido) { toast(`Bloqueado: completa primero ${blo}`); return; }
   const nuevo = !t.cumplido;
@@ -248,7 +252,6 @@ function abrirEditarProyecto(){
   const p = activo;
   $("#e-if").value = p.nro_if||""; $("#e-cliente").value = p.cliente||"";
   $("#e-nombre").value = p.nombre||""; $("#e-ficha").value = p.ficha||"";
-  $("#e-inicio").value = p.plan_inicio||"";
   $("#e-plazo").value = p.plazo_entrega||"";
   $("#edit-err").textContent = "";
   renderFichaInputs("efi-body", p.inputs || {});
@@ -261,10 +264,8 @@ async function guardarEdicionProyecto(){
   if (!nro||!cli||!nom){ $("#edit-err").textContent="Nro. IF, cliente y nombre son obligatorios."; return; }
   const faltan = validarFichaInputs("efi-body");
   if (faltan.length){ $("#edit-err").textContent = "Completá marca Y modelo en: " + faltan.join(", "); return; }
-  const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha, plan_inicio:activo.plan_inicio, plazo_entrega:activo.plazo_entrega };
-  const inicioNuevo = $("#e-inicio").value||null;
-  const cambioInicio = inicioNuevo !== (activo.plan_inicio||null);
-  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, plan_inicio:inicioNuevo, inputs: leerFichaInputs("efi-body") };
+  const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha };
+  const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, inputs: leerFichaInputs("efi-body") };
   await sb.from("proyectos").update(campos).eq("id", activo.id);
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
@@ -272,9 +273,8 @@ async function guardarEdicionProyecto(){
   $("#modal-editar").classList.remove("open");
   await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
   await cargarTareas(activo.id);
-  if (cambioInicio && inicioNuevo) { await aplicarPlanificacion({ silencioso:true }); }
   render();
-  toast(cambioInicio && inicioNuevo ? "Proyecto actualizado · plan recalculado" : "Proyecto actualizado");
+  toast("Proyecto actualizado");
 }
 async function eliminarProyecto(){
   if (!esCoord()) { toast("Solo la coordinacion puede eliminar proyectos"); return; }
@@ -490,9 +490,16 @@ async function aplicarPlanificacion({ silencioso } = {}) {
     }).eq("id", t.id);
   }
 
+  // marcar la tarea "Analisis general" como cumplida (ya hay inicio + rubros)
+  const tAG = TAREAS.find(t=>t.analisis_general);
+  if (tAG && !tAG.cumplido) {
+    await sb.from("tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() }).eq("id", tAG.id);
+  }
+
   // PLAZO DE ENTREGA automatico = fin de Etapa 3
   const plazo = finE3 ? fmtFecha(finE3) : null;
-  await sb.from("proyectos").update({ plan_fin_f1:fmtFecha(finE1), plan_fin_f2:finE2?fmtFecha(finE2):null, plazo_entrega:plazo }).eq("id", activo.id);
+  const catActual = categoriaActiva();
+  await sb.from("proyectos").update({ categoria:catActual, plan_fin_f1:fmtFecha(finE1), plan_fin_f2:finE2?fmtFecha(finE2):null, plazo_entrega:plazo }).eq("id", activo.id);
 
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"editar",
@@ -502,6 +509,23 @@ async function aplicarPlanificacion({ silencioso } = {}) {
   activo = PROYECTOS.find(p=>p.id===activo.id);
   if(!silencioso) toast(`Plan recalculado · Cat ${categoriaActiva()} · entrega ${plazo||'—'}`);
   render();
+}
+
+// Guarda la fecha de inicio del proyecto (desde el panel de Analisis general)
+// y, si ya hay rubros seleccionados, recalcula todo el plan.
+async function guardarInicioProyecto(fecha) {
+  if (!esCoord()) { toast("Solo la coordinacion edita la planificación"); return; }
+  const val = fecha || null;
+  if (activo) activo.plan_inicio = val;
+  try {
+    await sb.from("proyectos").update({ plan_inicio: val }).eq("id", activo.id);
+    const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
+    if (ix>=0) PROYECTOS[ix].plan_inicio = val;
+  } catch(e){ toast("No se pudo guardar: " + (e.message||e)); return; }
+  if (!val) { toast("Quitaste la fecha de inicio"); return; }
+  // basta con la fecha de inicio: si no hay rubros, es Categoría 3 (valido)
+  await aplicarPlanificacion({ silencioso:true });
+  toast(`Inicio ${val} · plan recalculado · entrega ${activo.plazo_entrega||'—'}`);
 }
 
 // Guarda los rubros a redibujar y deriva la categoria automaticamente.
@@ -615,6 +639,13 @@ function renderLista() {
   return `<div class="lista-top">${btn}</div>${cards}`;
 }
 
+// lee una fecha (inicio|fin) de la tarea con cierto slug en el proyecto activo
+function bySlugFecha(slug, campo){
+  const t = TAREAS.find(x=>x.slug===slug);
+  if (!t) return "";
+  return (campo==="inicio" ? t.fecha_inicio : t.fecha_fin) || "";
+}
+
 function nodoTarea(t, depth) {
   const hijos = hijosDe(t.id).sort((a,b)=>a.orden-b.orden);
   const tieneHijos = hijos.length > 0;
@@ -628,6 +659,15 @@ function nodoTarea(t, depth) {
     const gateLock = blo && !t.cumplido;
     const permLock = !puedoTildarEsta && !t.cumplido;   // no soy responsable ni coordinacion
     const iaLock   = t.auto_ia;                          // se tilda sola por IA
+    const agAuto   = t.analisis_general;                 // se completa sola (inicio + rubros)
+    // El check de "Analisis general" NO se tilda a mano ni muestra candado:
+    // refleja si ya hay fecha de inicio y al menos un rubro seleccionado.
+    if (agAuto) {
+      const completo = !!activo.plan_inicio;   // basta con la fecha de inicio
+      checkHTML = `<button class="chk ${completo?'on':''} auto" data-id="${t.id}" title="${completo?'Planificado: fecha de inicio cargada':'Cargá la fecha de inicio en el panel de abajo'}">
+        ${completo?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg>':''}
+      </button>`;
+    } else {
     const lock = gateLock || permLock || iaLock;
     let titleTxt = "";
     if (gateLock) titleTxt = "Bloqueado: " + blo;
@@ -636,6 +676,7 @@ function nodoTarea(t, depth) {
     checkHTML = `<button class="chk ${t.cumplido?'on':''} ${lock&&!t.cumplido?'lock':''}" data-id="${t.id}" ${titleTxt?`title="${titleTxt}"`:''}>
       ${t.cumplido?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg>':(lock?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>':'')}
     </button>`;
+    }
   } else {
     const tot = hijos.length;
     const hechos = hijos.filter(h=>h.cumplido).length;
@@ -673,14 +714,26 @@ function nodoTarea(t, depth) {
     </div>`;
   }
 
-  // panel de ANALISIS GENERAL: rubros a redibujar -> categoria automatica
+  // panel de ANALISIS GENERAL: fecha de inicio + rubros a redibujar -> categoria
   let analisisHTML = "";
   if (t.analisis_general) {
     const sel = (activo.rubros_redibujar || []);
     const cat = activo.categoria || window.categoriaPorRubros(sel.length);
     const totalCat = { 1:20, 2:15, 3:10 }[cat];
+    const ini = activo.plan_inicio || "";
+    const fin = activo.plan_fin_f2 || "";   // fin de Etapa 2 (lo que llega hasta E2)
     if (esCoord()) {
       analisisHTML = `<div class="ag-panel">
+        <div class="ag-fechas">
+          <div class="ag-f">
+            <label>Fecha de inicio</label>
+            <input type="date" class="ag-inicio" value="${ini}">
+          </div>
+          <div class="ag-f">
+            <label>Fin (hasta Etapa 2) <span class="auto-tag">auto</span></label>
+            <input type="date" class="ag-fin" value="${fin}" readonly title="Se calcula con la categoría">
+          </div>
+        </div>
         <div class="ag-tit">Rubros a redibujar</div>
         <div class="ag-rubros">
           ${window.RUBROS_REDIBUJO.map(r=>`
@@ -692,11 +745,11 @@ function nodoTarea(t, depth) {
           </div>
           <span class="ag-cat-info">Categoría <b>${cat}</b> · ${totalCat} días hábiles · ${sel.length} rubro(s)</span>
         </div>
-        <div class="ag-rule">Regla: 3+ rubros → Cat 1 · 2 rubros → Cat 2 · 1 o menos → Cat 3. La categoría reparte los días en la Etapa 2.</div>
-        <button class="btn sm" id="ag-replan" style="margin-top:10px">Recalcular planificación (Etapas 2 y 3)</button>
+        <div class="ag-rule">Poné la fecha de inicio y tildá los rubros: el fin se calcula solo. 3+ rubros → Cat 1 · 2 → Cat 2 · 1 o menos → Cat 3.</div>
       </div>`;
     } else {
       analisisHTML = `<div class="ag-panel ro">
+        <div class="ag-fechas-ro">Inicio: <b>${ini||'—'}</b> · Fin E2: <b>${fin||'—'}</b></div>
         <div class="ag-tit">Rubros a redibujar</div>
         <div class="ag-rubros-ro">${sel.length ? sel.join(" · ") : "(sin definir)"}</div>
         <span class="ag-cat-info">Categoría <b>${cat}</b> · ${totalCat} días hábiles</span>
@@ -709,6 +762,8 @@ function nodoTarea(t, depth) {
   if (t.selecciona_modo3) {
     const modo = activo.modo_etapa3 || "ia";
     if (esCoord()) {
+      const iniE3 = bySlugFecha("e3_listado","inicio") || bySlugFecha("e3_ejecutiva","inicio") || "";
+      const finE3 = activo.plazo_entrega || bySlugFecha("e3_computo","fin") || bySlugFecha("e3_control","fin") || "";
       modo3HTML = `<div class="ag-panel">
         <div class="ag-tit">Modo de documentación ejecutiva</div>
         <div class="m3-opts">
@@ -718,7 +773,8 @@ function nodoTarea(t, depth) {
               <b>${m.label}</b><span>${m.dias_total} día${m.dias_total>1?'s':''} hábil${m.dias_total>1?'es':''}</span>
             </label>`).join("")}
         </div>
-        <div class="ag-rule">DWG: 19 días de documentación ejecutiva + 1 para el resto de la etapa. IA y BIM: 1 día. La Etapa 3 arranca al cerrar la Etapa 2.</div>
+        <div class="ag-fechas-ro">Etapa 3: <b>${iniE3||'—'}</b> → <b>${finE3||'—'}</b> (arranca al cerrar la Etapa 2)</div>
+        <div class="ag-rule">DWG: 19 días de documentación ejecutiva + 1 para el resto. IA y BIM: 1 día. Al elegir el modo, las fechas se recalculan solas.</div>
       </div>`;
     } else {
       const lbl = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).label || modo;
@@ -726,18 +782,22 @@ function nodoTarea(t, depth) {
     }
   }
 
-  // fechas por tarea con indicador de desvio vs linea base (no en rubros)
-  const editFechas = esCoord();
+  // fechas por tarea con indicador de desvio vs linea base (no en rubros).
+  // Las tareas que forman parte del PLAN AUTOMATICO (tienen slug, o son el
+  // selector de Etapa 3, o el analisis general) muestran sus fechas como
+  // SOLO LECTURA: se calculan solas, no se editan a mano.
+  const esPlanAuto = !!(t.slug || t.selecciona_modo3 || t.analisis_general);
+  const editFechas = esCoord() && !esPlanAuto;
   let fechasHTML = "";
-  if (t.nivel !== "rubro") {
+  if (t.nivel !== "rubro" && !t.selecciona_modo3 && !t.analisis_general) {
     const desvIni = desvioDias(t.base_inicio, t.fecha_inicio);
     const desvFin = desvioDias(t.base_fin, t.fecha_fin);
     const tagDesv = (d) => d===null ? "" : (d===0 ? `<span class="desv ok">en fecha</span>`
       : d>0 ? `<span class="desv late">+${d}d</span>` : `<span class="desv early">${d}d</span>`);
     fechasHTML = `<div class="fechas">
-         <input type="date" class="f-ini" data-id="${t.id}" value="${t.fecha_inicio||''}" ${editFechas?'':'disabled'} title="Inicio">
+         <input type="date" class="f-ini" data-id="${t.id}" value="${t.fecha_inicio||''}" ${editFechas?'':'readonly'} title="Inicio">
          <span class="f-sep">-></span>
-         <input type="date" class="f-fin" data-id="${t.id}" value="${t.fecha_fin||''}" ${editFechas?'':'disabled'} title="Fin">
+         <input type="date" class="f-fin" data-id="${t.id}" value="${t.fecha_fin||''}" ${editFechas?'':'readonly'} title="Fin">
          ${t.base_inicio||t.base_fin?`<span class="base-lbl" title="Linea base">base: ${t.base_inicio||'—'} / ${t.base_fin||'—'}</span>`:""}
          ${tagDesv(desvFin)}
        </div>`;
@@ -1364,8 +1424,9 @@ function bind() {
     const sel = Array.from(document.querySelectorAll(".ag-rubro")).filter(x=>x.checked).map(x=>x.value);
     guardarRubrosRedibujo(sel);
   });
-  const agReplan = $("#ag-replan");
-  if (agReplan) agReplan.onclick = ()=> aplicarPlanificacion();
+  // analisis general: fecha de inicio dentro del panel
+  const agInicio = document.querySelector(".ag-inicio");
+  if (agInicio) agInicio.onchange = ()=> guardarInicioProyecto(agInicio.value);
   // modo etapa 3
   document.querySelectorAll(".m3-radio").forEach(r=>r.onchange=()=>{ if(r.checked) guardarModoEtapa3(r.value); });
   // editar / eliminar proyecto
