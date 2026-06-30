@@ -152,9 +152,11 @@ function etapaCompleta(nEtapa){
 function gateBloqueado(tarea) {
   // Regla de etapa: no se puede arrancar Etapa 3 sin la Etapa 2 completa.
   if (tarea.etapa === 3 && !etapaCompleta(2)) return "Etapa 2 (completala primero)";
-  // una tarea está bloqueada si existe, antes que ella (mismo padre/nivel),
+  // una tarea está bloqueada si existe, antes que ella (mismo padre, MISMA ETAPA),
   // un grupo de modelado con rubros sin completar.
-  const hermanos = TAREAS.filter(t => t.parent_id === tarea.parent_id).sort((a,b)=>a.orden-b.orden);
+  const hermanos = TAREAS
+    .filter(t => t.parent_id === tarea.parent_id && t.etapa === tarea.etapa)
+    .sort((a,b)=>a.orden-b.orden);
   const idx = hermanos.findIndex(h => h.id === tarea.id);
   for (let i=0; i<idx; i++) {
     const h = hermanos[i];
@@ -176,6 +178,10 @@ async function toggleCheck(t) {
   }
   if (t.analisis_general) {
     toast("Se completa sola: cargá la fecha de inicio y los rubros en el panel");
+    return;
+  }
+  if (t.asigna_roles) {
+    toast("Se completa sola al asignar los 4 responsables en el panel");
     return;
   }
   const blo = gateBloqueado(t);
@@ -201,8 +207,19 @@ async function asignarRol(rolKey, persona) {
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion: "editar",
     detalle: { rol: rolKey, asignado: persona }, hecho_por: PERFIL.id });
-  await cargarTareas(activo.id); await cargarProyectos();
+  await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
+  // 3) auto-completar la tarea "Asignacion de responsables" segun esten o no
+  //    asignados los 4 roles de proyecto.
+  const todos = window.ROLES_PROYECTO.every(r => !!activo[r.key]);
+  const tAsig = TAREAS.find(t => t.asigna_roles);
+  if (tAsig && !!tAsig.cumplido !== todos) {
+    await sb.from("tareas").update({
+      cumplido: todos,
+      cumplido_en: todos ? new Date().toISOString() : null
+    }).eq("id", tAsig.id);
+  }
+  await cargarTareas(activo.id);
   toast(`${window.ROL_LABEL[rolKey]}: ${persona||"(sin asignar)"} - propagado`);
   render();
 }
@@ -659,12 +676,18 @@ function nodoTarea(t, depth) {
     const gateLock = blo && !t.cumplido;
     const permLock = !puedoTildarEsta && !t.cumplido;   // no soy responsable ni coordinacion
     const iaLock   = t.auto_ia;                          // se tilda sola por IA
-    const agAuto   = t.analisis_general;                 // se completa sola (inicio + rubros)
+    const agAuto   = t.analisis_general;                 // se completa sola (inicio)
+    const rolesAuto = t.asigna_roles;                    // se completa sola (4 roles)
     // El check de "Analisis general" NO se tilda a mano ni muestra candado:
-    // refleja si ya hay fecha de inicio y al menos un rubro seleccionado.
+    // refleja si ya hay fecha de inicio.
     if (agAuto) {
       const completo = !!activo.plan_inicio;   // basta con la fecha de inicio
       checkHTML = `<button class="chk ${completo?'on':''} auto" data-id="${t.id}" title="${completo?'Planificado: fecha de inicio cargada':'Cargá la fecha de inicio en el panel de abajo'}">
+        ${completo?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg>':''}
+      </button>`;
+    } else if (rolesAuto) {
+      const completo = window.ROLES_PROYECTO.every(r => !!activo[r.key]);
+      checkHTML = `<button class="chk ${completo?'on':''} auto" data-id="${t.id}" title="${completo?'Responsables asignados':'Asigná los 4 responsables en el panel de abajo'}">
         ${completo?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5L20 6"/></svg>':''}
       </button>`;
     } else {
