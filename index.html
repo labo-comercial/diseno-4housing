@@ -312,6 +312,9 @@ input,select,textarea{font-family:inherit}
 .m3-opt input{display:none}
 .m3-opt b{font-size:13.5px;color:var(--ink)}
 .m3-opt span{font-size:11.5px;color:var(--muted)}
+.auto-tag{font-size:10px;font-weight:700;color:var(--olive-deep);background:#eef2e6;padding:1px 7px;border-radius:5px;letter-spacing:.02em;text-transform:uppercase;margin-left:6px;vertical-align:middle}
+input[readonly]{background:#f3f2ec;color:#6f6c60;cursor:not-allowed}
+.al-dias{font-size:12px;font-weight:800;color:var(--red);background:var(--redbg,#f6e3e0);padding:2px 9px;border-radius:30px;flex:none}
 </style>
 </head>
 <body>
@@ -364,7 +367,8 @@ input,select,textarea{font-family:inherit}
       <div class="field"><label>Nombre del proyecto</label><input type="text" id="n-nombre" placeholder="Nombre"></div>
       <div class="field"><label>Requisitos / Ficha descriptiva</label><textarea id="n-ficha" placeholder="Detalle de requisitos…"></textarea></div>
       <div class="frow">
-        <div class="field"><label>Plazo de entrega</label><input type="date" id="n-plazo"></div>
+        <div class="field"><label>Fecha de inicio</label><input type="date" id="n-inicio"></div>
+        <div class="field"><label>Plazo de entrega <span class="auto-tag">se calcula solo</span></label><input type="date" id="n-plazo" readonly title="Se completa automáticamente al planificar"></div>
         <div class="field"><label>Responsable</label><select id="n-resp"></select></div>
       </div>
       <div class="field"><label>Estado</label>
@@ -425,7 +429,8 @@ input,select,textarea{font-family:inherit}
       </div>
       <div class="field"><label>Nombre del proyecto</label><input type="text" id="e-nombre"></div>
       <div class="field"><label>Requisitos / Ficha descriptiva</label><textarea id="e-ficha"></textarea></div>
-      <div class="field"><label>Plazo de entrega</label><input type="date" id="e-plazo"></div>
+      <div class="field"><label>Fecha de inicio</label><input type="date" id="e-inicio"></div>
+      <div class="field"><label>Plazo de entrega <span class="auto-tag">se calcula solo</span></label><input type="date" id="e-plazo" readonly title="Se completa automáticamente al planificar"></div>
       <div class="ficha-inputs">
         <div class="ficha-head" id="efi-toggle">
           <svg class="fi-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
