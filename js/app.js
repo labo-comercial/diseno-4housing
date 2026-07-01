@@ -93,6 +93,8 @@ async function crearProyecto(campos) {
       analisis_general: !!t.analisis_general,
       selecciona_modo3: !!t.selecciona_modo3,
       auto_ia: !!t.auto_ia,
+      revision_planta: !!t.revision_planta,
+      minuta_flag: !!t.minuta,
     });
     if (t.subitems) t.subitems.forEach((s,i)=>pushTarea(s, etapa, ref, i, "subitem", depth+1));
     if (t.rubros)   t.rubros.forEach((r,i)=>pushTarea(r, etapa, ref, i, "rubro",   depth+1));
@@ -114,7 +116,7 @@ async function crearProyecto(campos) {
       tipo:f.tipo, nombre:f.nombre, responsable:f.responsable, nota:f.nota,
       rol:f.rol, slug:f.slug, asigna_roles:f.asigna_roles,
       analisis_general:f.analisis_general, selecciona_modo3:f.selecciona_modo3,
-      auto_ia:f.auto_ia,
+      auto_ia:f.auto_ia, revision_planta:f.revision_planta, minuta_flag:f.minuta_flag,
       parent_id: f._parentRef ? idDeRef[f._parentRef] : null,
     }));
     const { data:ins, error:eIns } = await sb.from("tareas").insert(payload)
@@ -376,6 +378,135 @@ async function confirmarDesvioFecha() {
   $("#modal-fecha").classList.remove("open");
   await cargarTareas(activo.id);
   render();
+}
+
+// ============================================================
+// REVISION EN PLANTA (Etapa 4)
+// Agenda una revision (fecha + persona). Si la persona ya tiene una tarea
+// planificada ese dia en CUALQUIER proyecto, corre esa tarea y su cadena
+// posterior 1 dia habil, con confirmacion previa y registro de desvio.
+// ============================================================
+
+// tareas (hoja o con fecha) de una persona cuya ventana [inicio..fin] incluye la fecha
+function colisionesAgenda(persona, fechaISO, excluirId) {
+  if (!persona || !fechaISO) return [];
+  const f = aFecha(fechaISO);
+  return (TAREAS_ALL||[]).filter(t=>{
+    if (t.id === excluirId) return false;
+    if (t.eliminada) return false;
+    if (t.cumplido) return false;                 // ya hecha, no molesta
+    if (t.responsable !== persona) return false;
+    const ini = aFecha(t.fecha_inicio), fin = aFecha(t.fecha_fin);
+    if (!ini && !fin) return false;
+    const a = ini||fin, b = fin||ini;
+    return f >= a && f <= b;                       // la fecha cae dentro de la tarea
+  });
+}
+
+// corre una tarea y TODAS las que le siguen en su mismo proyecto
+// una cantidad de dias habiles. Devuelve la lista de cambios.
+function calcularCorrimiento(tareaColision, diasHabiles) {
+  const pid = tareaColision.proyecto_id;
+  const delProy = (TAREAS_ALL||[]).filter(t=>t.proyecto_id===pid && !t.eliminada && (t.fecha_inicio||t.fecha_fin));
+  const refIni = aFecha(tareaColision.fecha_inicio||tareaColision.fecha_fin);
+  const afectadas = delProy.filter(t=>{
+    const i = aFecha(t.fecha_inicio||t.fecha_fin);
+    return i && i >= refIni;
+  });
+  return afectadas.map(t=>{
+    const ni = t.fecha_inicio ? fmtFecha(sumarHabiles(aFecha(t.fecha_inicio), diasHabiles)) : null;
+    const nf = t.fecha_fin ? fmtFecha(sumarHabiles(aFecha(t.fecha_fin), diasHabiles)) : null;
+    return { id:t.id, nombre:t.nombre, proyecto_id:pid, etapa:t.etapa,
+             de_ini:t.fecha_inicio, de_fin:t.fecha_fin, a_ini:ni, a_fin:nf };
+  });
+}
+
+async function agendarRevisionPlanta(tareaId, fecha, persona) {
+  if (!esCoord()) { toast("Solo la coordinacion agenda revisiones"); return; }
+  const t = TAREAS.find(x=>x.id===tareaId);
+  if (!t) return;
+  await cargarTareasTodas();
+  await sb.from("tareas").update({ rev_fecha:fecha||null, rev_persona:persona||null }).eq("id", tareaId);
+  if (!fecha || !persona) {
+    await cargarTareas(activo.id); render(); toast("Revisión guardada"); return;
+  }
+  const cols = colisionesAgenda(persona, fecha, tareaId);
+  if (!cols.length) {
+    await cargarTareas(activo.id); render();
+    toast(`Revisión agendada · ${persona} · ${fecha}`); return;
+  }
+  const DIAS = 1;
+  let plan = []; const proyVistos = new Set();
+  cols.forEach(c=>{
+    if (proyVistos.has(c.proyecto_id)) return;
+    proyVistos.add(c.proyecto_id);
+    plan = plan.concat(calcularCorrimiento(c, DIAS));
+  });
+  window.__pendienteRevision = { tareaId, fecha, persona, plan, cols };
+  abrirModalRevision(persona, fecha, cols, plan);
+}
+
+function abrirModalRevision(persona, fecha, cols, plan) {
+  const cont = $("#rev-body");
+  const porProy = {};
+  plan.forEach(x=>{ (porProy[x.proyecto_id]=porProy[x.proyecto_id]||[]).push(x); });
+  const proyById = {}; (PROYECTOS||[]).forEach(p=>proyById[p.id]=p);
+  const bloques = Object.keys(porProy).map(pid=>{
+    const p = proyById[pid]||{};
+    return `<div class="rev-proy"><div class="rev-proy-t">${p.nombre||'Proyecto'}</div>
+      ${porProy[pid].map(x=>`<div class="rev-item"><span>E${x.etapa} · ${x.nombre}</span>
+        <span class="rev-fechas">${x.de_fin||x.de_ini||''} → <b>${x.a_fin||x.a_ini||''}</b></span></div>`).join("")}
+    </div>`;
+  }).join("");
+  cont.innerHTML = `
+    <p class="rev-intro"><b>${persona}</b> ya tiene tareas el <b>${fecha}</b>. Agendar esta revisión va a
+    correr <b>1 día hábil</b> las siguientes <b>${plan.length}</b> tarea(s) y las que les siguen:</p>
+    ${bloques}
+    <p class="rev-warn">Quedará registrado como desvío con motivo "Revisión en planta".</p>`;
+  $("#modal-revision").classList.add("open");
+}
+
+async function confirmarRevision() {
+  const pend = window.__pendienteRevision;
+  if (!pend) return;
+  const { fecha, persona, plan } = pend;
+  for (const x of plan) {
+    await sb.from("tareas").update({ fecha_inicio:x.a_ini, fecha_fin:x.a_fin }).eq("id", x.id);
+    await sb.from("historial_fechas").insert({
+      tarea_id:x.id, proyecto_id:x.proyecto_id, campo:"fin",
+      fecha_anterior:x.de_fin, fecha_nueva:x.a_fin,
+      motivo:"Revision en planta",
+      detalle:`Corrida por revisión en planta de ${persona} el ${fecha}`,
+      cambiado_por:PERFIL.id });
+  }
+  $("#modal-revision").classList.remove("open");
+  window.__pendienteRevision = null;
+  await cargarTareas(activo.id); await cargarTareasTodas(); await cargarProyectos();
+  activo = PROYECTOS.find(p=>p.id===activo.id);
+  render();
+  toast(`Revisión agendada · ${plan.length} tarea(s) corridas 1 día`);
+}
+
+async function cancelarRevision() {
+  const pend = window.__pendienteRevision;
+  if (pend) {
+    await sb.from("tareas").update({ rev_fecha:null }).eq("id", pend.tareaId);
+    window.__pendienteRevision = null;
+    await cargarTareas(activo.id); render();
+  }
+  $("#modal-revision").classList.remove("open");
+  toast("Revisión no agendada (se quitó la fecha para evitar la colisión)");
+}
+
+// ---------- MINUTAS (reuniones de validacion) ----------
+async function guardarMinuta(tareaId, minuta) {
+  const t = TAREAS.find(x=>x.id===tareaId)||{};
+  if (!esCoord() && !soyResponsable(t)) {
+    toast("Solo coordinación o el responsable cargan la minuta"); return;
+  }
+  await sb.from("tareas").update({ minuta }).eq("id", tareaId);
+  await cargarTareas(activo.id); render();
+  toast("Minuta guardada");
 }
 
 // ============================================================
@@ -805,6 +936,58 @@ function nodoTarea(t, depth) {
     }
   }
 
+  // panel de REVISION EN PLANTA (Etapa 4): fecha + persona
+  let revHTML = "";
+  if (t.revision_planta) {
+    const fecha = t.rev_fecha || "";
+    const persona = t.rev_persona || "";
+    if (esCoord()) {
+      revHTML = `<div class="ag-panel">
+        <div class="ag-tit">Revisión en planta</div>
+        <div class="ag-fechas">
+          <div class="ag-f"><label>Fecha</label><input type="date" class="rev-fecha" data-id="${t.id}" value="${fecha}"></div>
+          <div class="ag-f"><label>Realiza</label>
+            <select class="rev-persona" data-id="${t.id}">
+              <option value="">(elegir)</option>
+              ${window.RESPONSABLES.map(r=>`<option ${persona===r?'selected':''}>${r}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="ag-rule">Si la persona ya tiene una tarea ese día (en cualquier proyecto), se ofrecerá correr esa tarea y las siguientes 1 día hábil.</div>
+      </div>`;
+    } else {
+      revHTML = `<div class="ag-panel ro"><div class="ag-tit">Revisión en planta</div>
+        <div class="ag-fechas-ro">${fecha||'—'} · ${persona||'sin asignar'}</div></div>`;
+    }
+  }
+
+  // panel de MINUTA (reuniones de validacion)
+  let minutaHTML = "";
+  if (t.minuta_flag) {
+    const m = t.minuta || {};
+    const editable = esCoord() || soyResponsable(t);
+    if (editable) {
+      minutaHTML = `<div class="ag-panel">
+        <div class="ag-tit">Minuta de reunión</div>
+        <div class="ag-fechas">
+          <div class="ag-f"><label>Fecha y hora</label><input type="datetime-local" class="min-fh" data-id="${t.id}" value="${m.fecha_hora||''}"></div>
+        </div>
+        <div class="min-field"><label>Temas tratados</label>
+          <textarea class="min-temas" data-id="${t.id}" rows="3" placeholder="Resumen de lo conversado…">${(m.temas||'').replace(/</g,'&lt;')}</textarea></div>
+        <label class="min-check"><input type="checkbox" class="min-req" data-id="${t.id}" ${m.requiere_revision?'checked':''}> Requiere revisiones del responsable</label>
+        <div class="min-field"><label>Detalle de revisiones</label>
+          <textarea class="min-detalle" data-id="${t.id}" rows="2" placeholder="Qué debe revisar y quién…">${(m.detalle||'').replace(/</g,'&lt;')}</textarea></div>
+        <button class="btn sm min-save" data-id="${t.id}" style="margin-top:8px">Guardar minuta</button>
+      </div>`;
+    } else if (m.fecha_hora || m.temas) {
+      minutaHTML = `<div class="ag-panel ro"><div class="ag-tit">Minuta</div>
+        <div class="ag-fechas-ro">${(m.fecha_hora||'').replace('T',' ')}</div>
+        ${m.temas?`<div class="min-ro"><b>Temas:</b> ${m.temas.replace(/</g,'&lt;')}</div>`:''}
+        ${m.requiere_revision?`<div class="min-ro"><b>Revisiones:</b> ${(m.detalle||'sí').replace(/</g,'&lt;')}</div>`:'<div class="min-ro">Sin revisiones pendientes</div>'}
+      </div>`;
+    }
+  }
+
   // fechas por tarea con indicador de desvio vs linea base (no en rubros).
   // Las tareas que forman parte del PLAN AUTOMATICO (tienen slug, o son el
   // selector de Etapa 3, o el analisis general) muestran sus fechas como
@@ -812,7 +995,7 @@ function nodoTarea(t, depth) {
   const esPlanAuto = !!(t.slug || t.selecciona_modo3 || t.analisis_general);
   const editFechas = esCoord() && !esPlanAuto;
   let fechasHTML = "";
-  if (t.nivel !== "rubro" && !t.selecciona_modo3 && !t.analisis_general) {
+  if (t.nivel !== "rubro" && !t.selecciona_modo3 && !t.analisis_general && !t.revision_planta) {
     const desvIni = desvioDias(t.base_inicio, t.fecha_inicio);
     const desvFin = desvioDias(t.base_fin, t.fecha_fin);
     const tagDesv = (d) => d===null ? "" : (d===0 ? `<span class="desv ok">en fecha</span>`
@@ -844,6 +1027,8 @@ function nodoTarea(t, depth) {
       ${rolesHTML}
       ${analisisHTML}
       ${modo3HTML}
+      ${revHTML}
+      ${minutaHTML}
       ${fechasHTML}
     </div>`;
   if (tieneHijos) html += hijos.map(h=>nodoTarea(h, depth+1)).join("");
@@ -1452,6 +1637,32 @@ function bind() {
   if (agInicio) agInicio.onchange = ()=> guardarInicioProyecto(agInicio.value);
   // modo etapa 3
   document.querySelectorAll(".m3-radio").forEach(r=>r.onchange=()=>{ if(r.checked) guardarModoEtapa3(r.value); });
+  // revision en planta: al cambiar fecha o persona, evaluar colisiones
+  const revF = document.querySelector(".rev-fecha");
+  const revP = document.querySelector(".rev-persona");
+  const dispararRev = ()=>{
+    if (!revF || !revP) return;
+    const id = revF.dataset.id;
+    agendarRevisionPlanta(id, revF.value||null, revP.value||null);
+  };
+  if (revF) revF.onchange = dispararRev;
+  if (revP) revP.onchange = dispararRev;
+  // minuta
+  document.querySelectorAll(".min-save").forEach(b=>b.onclick=()=>{
+    const id = b.dataset.id;
+    const q = sel => document.querySelector(`${sel}[data-id="${id}"]`);
+    const minuta = {
+      fecha_hora: q(".min-fh")?.value || null,
+      temas: q(".min-temas")?.value.trim() || null,
+      requiere_revision: !!q(".min-req")?.checked,
+      detalle: q(".min-detalle")?.value.trim() || null,
+    };
+    guardarMinuta(id, minuta);
+  });
+  // modal revision confirmar/cancelar
+  $("#rev-confirm") && ($("#rev-confirm").onclick = confirmarRevision);
+  $("#rev-cancel") && ($("#rev-cancel").onclick = cancelarRevision);
+  $("#rev-cancel-x") && ($("#rev-cancel-x").onclick = cancelarRevision);
   // editar / eliminar proyecto
   const edP = $("#editar-proy");
   if (edP) edP.onclick = abrirEditarProyecto;

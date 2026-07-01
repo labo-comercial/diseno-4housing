@@ -30,6 +30,9 @@ window.RESPONSABLES = [
   "Juan Callero",
   "Ileana Callero",
   "Nicolas Komina",
+  "Nicolas Mendoza",
+  "Ana Julia Bustillo",
+  "Alejo Zuchelli",
 ];
 
 // ------------------------------------------------------------
@@ -176,10 +179,10 @@ window.PLANTILLA = [
     titulo: "Etapa 2 - Modelado",
     tareas: [
       modelado("Modelado 1", { rol: "resp_diseno", slug: "modelado_1" }),
-      { nombre: "Reunion de validacion de modelado 1", responsable: "Ileana Callero", slug: "reunion_validacion_1" },
+      { nombre: "Reunion de validacion de modelado 1", responsable: "Ileana Callero", slug: "reunion_validacion_1", minuta: true },
       modelado("Modelado 2", { rol: "resp_diseno", slug: "modelado_2" }),
-      { nombre: "Validacion por produccion", rol: "coord_produccion", slug: "validacion_produccion" },
-      { nombre: "Reunion de validacion de modelo 2", responsable: "Ileana Callero", slug: "reunion_validacion_2" },
+      { nombre: "Validacion por produccion", rol: "coord_produccion", slug: "validacion_produccion", minuta: true },
+      { nombre: "Reunion de validacion de modelo 2", responsable: "Ileana Callero", slug: "reunion_validacion_2", minuta: true },
       modelado("Modelado 3", { rol: "resp_diseno", slug: "modelado_3" }),
       {
         nombre: "Validacion por asistente IA",
@@ -214,22 +217,24 @@ window.PLANTILLA = [
   },
 
   // ----------------------------------------------------------
-  // ETAPA 4 — Seguimiento de diseno en produccion (a definir)
-  // Las visitas a produccion (dias planificados) se modelaran aca.
-  // Placeholder por ahora.
+  // ETAPA 4 — Seguimiento de diseno en produccion
+  // 6 hitos de "Revision en planta": cada uno con fecha y persona.
+  // Si la persona ya tiene una tarea ese dia (en cualquier proyecto),
+  // se corre esa tarea y su cadena, con confirmacion + desvio.
   // ----------------------------------------------------------
   {
     etapa: 4,
     titulo: "Etapa 4 - Seguimiento de diseno en produccion",
     tareas: [
-      {
-        nombre: "Seguimiento de diseno en produccion",
-        responsable: "Nicolas Komina",
-        nota: "Etapa en definicion. Aca se planificaran las visitas a produccion (dias de control de avance y detalles constructivos).",
-      },
+      { nombre: "Revision en planta 1", tipo: "revision_planta", revision_planta: true },
+      { nombre: "Revision en planta 2", tipo: "revision_planta", revision_planta: true },
+      { nombre: "Revision en planta 3", tipo: "revision_planta", revision_planta: true },
+      { nombre: "Revision en planta 4", tipo: "revision_planta", revision_planta: true },
+      { nombre: "Revision en planta 5", tipo: "revision_planta", revision_planta: true },
+      { nombre: "Revision en planta 6", tipo: "revision_planta", revision_planta: true },
     ],
   },
 ];
 
 // Motivos para justificar cambios de fecha en la planificacion
-window.MOTIVOS_DESVIO = ["Planificacion", "Cliente", "Desarrollo"];
+window.MOTIVOS_DESVIO = ["Planificacion", "Cliente", "Desarrollo", "Revision en planta"];
