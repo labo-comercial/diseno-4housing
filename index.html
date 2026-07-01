@@ -322,6 +322,18 @@ input[readonly]{background:#f3f2ec;color:#6f6c60;cursor:not-allowed}
 .ag-f input[readonly]{background:#f3f2ec;color:#6f6c60}
 .ag-fechas-ro{font-size:12.5px;color:#55534a;margin-bottom:8px}
 .chk.auto{cursor:default}
+.min-field{margin-top:8px;display:flex;flex-direction:column;gap:4px}
+.min-field label{font-size:11px;font-weight:600;color:#55534a}
+.min-field textarea{border:1px solid var(--line-strong);border-radius:7px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;resize:vertical}
+.min-check{display:flex;align-items:center;gap:8px;font-size:13px;color:#55534a;margin-top:10px;cursor:pointer}
+.min-check input{width:16px;height:16px;accent-color:var(--olive-deep)}
+.min-ro{font-size:12.5px;color:#55534a;margin-top:4px}
+.rev-intro{font-size:13.5px;color:var(--ink);margin:0 0 12px}
+.rev-proy{border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:10px;background:#fbfaf3}
+.rev-proy-t{font-size:12px;font-weight:700;color:var(--olive-deep);margin-bottom:6px}
+.rev-item{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;color:#55534a;padding:3px 0}
+.rev-fechas{flex:none;color:#6f6c60}
+.rev-warn{font-size:12px;color:var(--amber);font-style:italic;margin:8px 0 0}
 </style>
 </head>
 <body>
@@ -469,6 +481,7 @@ input[readonly]{background:#f3f2ec;color:#6f6c60;cursor:not-allowed}
           <option>Planificacion</option>
           <option>Cliente</option>
           <option>Desarrollo</option>
+          <option>Revision en planta</option>
         </select>
       </div>
       <div class="field"><label>Detalle (opcional)</label><textarea id="df-detalle" placeholder="Aclaración del cambio…"></textarea></div>
@@ -477,6 +490,18 @@ input[readonly]{background:#f3f2ec;color:#6f6c60;cursor:not-allowed}
     <div class="modal-f">
       <button class="btn ghost" id="df-cancelar2" onclick="document.getElementById('modal-fecha').classList.remove('open');render()">Cancelar</button>
       <button class="btn" id="df-guardar">Guardar cambio</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CONFIRMAR REVISION EN PLANTA (corrimiento en cascada) -->
+<div class="modal-bg" id="modal-revision">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-h"><h3>Revisión en planta · reprogramar tareas</h3><button class="x" id="rev-cancel-x">×</button></div>
+    <div class="modal-b" id="rev-body"></div>
+    <div class="modal-f">
+      <button class="btn ghost" id="rev-cancel">No agendar</button>
+      <button class="btn" id="rev-confirm">Confirmar y correr tareas</button>
     </div>
   </div>
 </div>
