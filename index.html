@@ -211,6 +211,12 @@ input,select,textarea{font-family:inherit}
 .login-card input:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);background:#fff}
 .login-card .btn{width:100%;justify-content:center}
 #login-error{color:var(--red);font-size:12.5px;min-height:16px;margin-bottom:8px}
+.login-links{text-align:center;margin-top:6px}
+.login-links a{font-size:12.5px;color:var(--olive-deep);text-decoration:none}
+.login-links a:hover{text-decoration:underline}
+.login-help{font-size:12.5px;color:#55534a;margin:0 0 14px;line-height:1.4}
+#rec-error, #nc-error{color:var(--red);font-size:12.5px;min-height:16px;margin-bottom:8px}
+#rec-ok{color:var(--green);font-size:12.5px;margin-bottom:10px;background:var(--greenbg);padding:8px 10px;border-radius:8px}
 
 /* ---------- TOAST ---------- */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25)}
@@ -356,6 +362,33 @@ input[readonly]{background:#f3f2ec;color:#6f6c60;cursor:not-allowed}
     <input type="password" id="password" placeholder="contraseña" autocomplete="current-password">
     <div id="login-error"></div>
     <button class="btn" id="btn-login">Entrar</button>
+    <div class="login-links"><a href="#" id="link-olvide">¿Olvidaste tu contraseña?</a></div>
+  </div>
+</div>
+
+<!-- RECUPERAR CONTRASEÑA: paso 1, pedir email -->
+<div id="recuperar" class="login" style="display:none">
+  <div class="login-card">
+    <div class="brand"><div class="logo">4h</div><div><div style="font-weight:700">Gestión de Diseño</div><div style="font-size:12px;color:var(--muted)">4housing · acceso interno</div></div></div>
+    <h1>Recuperar contraseña</h1>
+    <p class="login-help">Ingresá tu email y te mandamos un link para elegir una contraseña nueva.</p>
+    <input type="email" id="rec-email" placeholder="email" autocomplete="username">
+    <div id="rec-error"></div>
+    <div id="rec-ok" style="display:none">Listo. Revisá tu correo (y la carpeta de spam) para continuar.</div>
+    <button class="btn" id="btn-recuperar">Enviar link</button>
+    <div class="login-links"><a href="#" id="link-volver-login">Volver a iniciar sesión</a></div>
+  </div>
+</div>
+
+<!-- RECUPERAR CONTRASEÑA: paso 2, elegir nueva (se abre desde el link del email) -->
+<div id="nueva-clave" class="login" style="display:none">
+  <div class="login-card">
+    <div class="brand"><div class="logo">4h</div><div><div style="font-weight:700">Gestión de Diseño</div><div style="font-size:12px;color:var(--muted)">4housing · acceso interno</div></div></div>
+    <h1>Elegí tu nueva contraseña</h1>
+    <input type="password" id="nc-pass1" placeholder="nueva contraseña" autocomplete="new-password">
+    <input type="password" id="nc-pass2" placeholder="repetir contraseña" autocomplete="new-password">
+    <div id="nc-error"></div>
+    <button class="btn" id="btn-guardar-clave">Guardar contraseña</button>
   </div>
 </div>
 
