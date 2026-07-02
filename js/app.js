@@ -9,6 +9,7 @@ let PROYECTOS = [];
 let activo = null;      // proyecto abierto
 let TAREAS = [];        // tareas del proyecto abierto (planas)
 let TAREAS_ALL = [];    // tareas de todos los proyectos (para el dashboard)
+let ACTIVIDAD = [];     // historial de actividad reciente (para el dashboard)
 let tab = "dash";
 
 // "Coordinacion" = admin + coordinador (los que pueden editar/eliminar proyectos,
@@ -33,6 +34,7 @@ async function init() {
   $("#app").style.display = "flex";
   await cargarProyectos();
   await cargarTareasTodas();
+  await cargarActividad();
   render();
 }
 async function cargarPerfil(user) {
@@ -65,6 +67,27 @@ async function cargarTareas(proyectoId) {
     .eq("proyecto_id", proyectoId).eq("eliminada", false)
     .order("etapa").order("orden");
   TAREAS = data || [];
+}
+
+// ---------- HISTORIAL DE ACTIVIDAD (timeline unificado) ----------
+// Se llama ademas de (no en reemplazo de) los inserts a historial_proyecto /
+// historial_responsable / historial_fechas: esas tablas siguen existiendo
+// tal cual. Esta es la fuente para el timeline global y por proyecto.
+// No debe frenar el flujo principal si falla: se llama sin await bloqueante
+// critico, pero igual se espera para no perder el orden en pantalla.
+async function logActividad(tipo, descripcion, detalle, proyecto) {
+  try {
+    const p = proyecto || activo || null;
+    await sb.from("historial_actividad").insert({
+      proyecto_id: p ? p.id : null,
+      proyecto_nombre: p ? p.nombre : null,
+      tipo, descripcion, detalle: detalle || null,
+      hecho_por: PERFIL ? PERFIL.id : null,
+      hecho_por_nombre: PERFIL ? PERFIL.nombre : null,
+    });
+  } catch (e) {
+    console.error("No se pudo registrar actividad:", e);
+  }
 }
 
 // ---------- CREAR PROYECTO (clona la plantilla) ----------
@@ -139,6 +162,7 @@ async function crearProyecto(campos) {
   await sb.from("historial_proyecto").insert({
     proyecto_id: proy.id, proyecto_nombre: proy.nombre,
     accion: "crear", detalle: { campos }, hecho_por: PERFIL.id });
+  await logActividad("proyecto_crear", `Proyecto creado: ${proy.nombre}`, { campos }, proy);
   await cargarProyectos();
 }
 
@@ -190,6 +214,11 @@ async function toggleCheck(t) {
   if (blo && !t.cumplido) { toast(`Bloqueado: completa primero ${blo}`); return; }
   const nuevo = !t.cumplido;
   await sb.from("tareas").update({ cumplido:nuevo, cumplido_en: nuevo?new Date().toISOString():null }).eq("id", t.id);
+  await logActividad(
+    nuevo ? "tarea_tildada" : "tarea_destildada",
+    `${nuevo ? "Tildada" : "Destildada"}: ${t.nombre} (Etapa ${t.etapa})`,
+    { tarea_id: t.id, nombre: t.nombre, etapa: t.etapa, responsable: t.responsable || null }
+  );
   await cargarTareas(activo.id); await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
   render();
@@ -209,6 +238,9 @@ async function asignarRol(rolKey, persona) {
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion: "editar",
     detalle: { rol: rolKey, asignado: persona }, hecho_por: PERFIL.id });
+  await logActividad("roles_asignados",
+    `${window.ROL_LABEL[rolKey]}: ${persona || "(sin asignar)"}`,
+    { rol: rolKey, asignado: persona });
   await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
   // 3) auto-completar la tarea "Asignacion de responsables" segun esten o no
@@ -246,6 +278,9 @@ async function confirmarMotivo() {
     tarea_id: tarea.id, proyecto_id: activo.id,
     resp_anterior: tarea.responsable, resp_nuevo: nuevo, motivo,
     cambiado_por: PERFIL.id });
+  await logActividad("responsable_cambio",
+    `${tarea.nombre}: ${tarea.responsable||"(sin asignar)"} → ${nuevo||"(sin asignar)"}`,
+    { tarea_id: tarea.id, nombre: tarea.nombre, resp_anterior: tarea.responsable, resp_nuevo: nuevo, motivo });
   await sb.from("tareas").update({ responsable: nuevo || null }).eq("id", tarea.id);
   $("#modal-motivo").classList.remove("open");
   await cargarTareas(activo.id);
@@ -289,6 +324,7 @@ async function guardarEdicionProyecto(){
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
     detalle: { antes, despues: campos }, hecho_por: PERFIL.id });
+  await logActividad("proyecto_editar", `Proyecto editado: ${nom}`, { antes, despues: campos });
   $("#modal-editar").classList.remove("open");
   await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id);
   await cargarTareas(activo.id);
@@ -301,6 +337,8 @@ async function eliminarProyecto(){
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"eliminar",
     detalle: { nro_if:activo.nro_if, cliente:activo.cliente }, hecho_por: PERFIL.id });
+  await logActividad("proyecto_eliminar", `Proyecto eliminado: ${activo.nombre}`,
+    { nro_if: activo.nro_if, cliente: activo.cliente });
   await sb.from("proyectos").delete().eq("id", activo.id);
   activo = null; await cargarProyectos(); tab="proj"; render();
   toast("Proyecto eliminado (queda registro)");
@@ -374,6 +412,9 @@ async function confirmarDesvioFecha() {
     fecha_anterior: valorViejo, fecha_nueva: valorNuevo || null,
     motivo, detalle: $("#df-detalle").value.trim() || null,
     cambiado_por: PERFIL.id });
+  await logActividad("fecha_cambio",
+    `${tarea.nombre}: ${campo} ${valorViejo||"(vacío)"} → ${valorNuevo||"(vacío)"} (${motivo})`,
+    { tarea_id: tarea.id, nombre: tarea.nombre, campo, fecha_anterior: valorViejo, fecha_nueva: valorNuevo || null, motivo });
   await sb.from("tareas").update({ [vigCol]: valorNuevo || null }).eq("id", tarea.id);
   $("#modal-fecha").classList.remove("open");
   await cargarTareas(activo.id);
@@ -432,6 +473,8 @@ async function agendarRevisionPlanta(tareaId, fecha, persona) {
   }
   const cols = colisionesAgenda(persona, fecha, tareaId);
   if (!cols.length) {
+    await logActividad("revision_planta", `Revisión en planta agendada: ${persona} · ${fecha}`,
+      { tarea_id: tareaId, nombre: t.nombre, persona, fecha });
     await cargarTareas(activo.id); render();
     toast(`Revisión agendada · ${persona} · ${fecha}`); return;
   }
@@ -479,6 +522,9 @@ async function confirmarRevision() {
       detalle:`Corrida por revisión en planta de ${persona} el ${fecha}`,
       cambiado_por:PERFIL.id });
   }
+  await logActividad("revision_planta",
+    `Revisión en planta de ${persona} el ${fecha} · corrió ${plan.length} tarea(s) 1 día hábil`,
+    { persona, fecha, tareas_corridas: plan.map(x=>({ id:x.id, nombre:x.nombre, proyecto_id:x.proyecto_id })) });
   $("#modal-revision").classList.remove("open");
   window.__pendienteRevision = null;
   await cargarTareas(activo.id); await cargarTareasTodas(); await cargarProyectos();
@@ -505,6 +551,8 @@ async function guardarMinuta(tareaId, minuta) {
     toast("Solo coordinación o el responsable cargan la minuta"); return;
   }
   await sb.from("tareas").update({ minuta }).eq("id", tareaId);
+  await logActividad("minuta", `Minuta cargada: ${t.nombre||""}`,
+    { tarea_id: tareaId, nombre: t.nombre, requiere_revision: !!minuta.requiere_revision });
   await cargarTareas(activo.id); render();
   toast("Minuta guardada");
 }
@@ -652,6 +700,9 @@ async function aplicarPlanificacion({ silencioso } = {}) {
   await sb.from("historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"editar",
     detalle:{ planificacion:"auto", inicio:activo.plan_inicio, categoria:categoriaActiva(), modo_etapa3:(activo.modo_etapa3||"ia"), plazo }, hecho_por: PERFIL.id });
+  await logActividad("planificacion_auto",
+    `Planificación recalculada · Categoría ${catActual} · entrega ${plazo||'—'}`,
+    { inicio: activo.plan_inicio, categoria: catActual, modo_etapa3: activo.modo_etapa3||"ia", plazo });
 
   await cargarTareas(activo.id); await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
@@ -1247,6 +1298,9 @@ function renderDash() {
       <svg class="dr-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
     </div>`).join("");
 
+  // ----- ACTIVIDAD RECIENTE (timeline global, todas las acciones registradas) -----
+  const actividadHTML = renderActividadLista(ACTIVIDAD);
+
   return `
     <div class="stats">${cards}</div>
     <div class="card" style="margin-bottom:16px">
@@ -1270,7 +1324,54 @@ function renderDash() {
         <div class="card-h">Avance por proyecto</div>
         <div class="card-b">${filas||'<p class="empty">Sin datos</p>'}</div>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-h">Actividad reciente</div>
+      <div class="card-b">${actividadHTML}</div>
     </div>`;
+}
+
+// ---------- ACTIVIDAD: icono, etiqueta y tiempo relativo por tipo ----------
+const ACTIVIDAD_TIPO = {
+  proyecto_crear:      { icono: "➕", label: "Proyecto creado" },
+  proyecto_editar:     { icono: "✎",  label: "Proyecto editado" },
+  proyecto_eliminar:   { icono: "🗑",  label: "Proyecto eliminado" },
+  responsable_cambio:  { icono: "↔",  label: "Cambio de responsable" },
+  fecha_cambio:        { icono: "📅", label: "Cambio de fecha" },
+  tarea_tildada:       { icono: "✔",  label: "Tarea completada" },
+  tarea_destildada:    { icono: "↺",  label: "Tarea reabierta" },
+  revision_planta:     { icono: "🏗", label: "Revisión en planta" },
+  planificacion_auto:  { icono: "⟳",  label: "Planificación" },
+  minuta:              { icono: "📝", label: "Minuta" },
+  roles_asignados:     { icono: "👤", label: "Responsables de proyecto" },
+};
+
+function tiempoRelativo(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "ahora";
+  if (diffMin < 60) return `hace ${diffMin} min`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `hace ${diffH} h`;
+  const diffD = Math.round(diffH / 24);
+  if (diffD === 1) return "ayer";
+  if (diffD < 7) return `hace ${diffD} días`;
+  return d.toISOString().slice(0,10);
+}
+
+function renderActividadLista(items) {
+  if (!items || !items.length) return `<p class="empty">Todavía no hay actividad registrada.</p>`;
+  return items.map(a => {
+    const meta = ACTIVIDAD_TIPO[a.tipo] || { icono: "•", label: a.tipo };
+    return `<div class="act-row" ${a.proyecto_id?`data-goto="${a.proyecto_id}"`:''}>
+      <span class="act-ico">${meta.icono}</span>
+      <div class="act-body">
+        <div class="act-desc">${a.descripcion}</div>
+        <div class="act-meta">${a.proyecto_nombre?`${a.proyecto_nombre} · `:''}${a.hecho_por_nombre||'—'} · ${tiempoRelativo(a.created_at)}</div>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 // ============================================================
@@ -1284,6 +1385,13 @@ let DESVIOS = [];
 async function cargarDesvios() {
   const { data } = await sb.from("desvios_nc").select("*").order("creado_en",{ascending:false});
   DESVIOS = data || [];
+}
+
+// historial de actividad reciente (todos los proyectos), para el dashboard
+async function cargarActividad(limite) {
+  const { data } = await sb.from("historial_actividad").select("*")
+    .order("created_at", { ascending:false }).limit(limite || 30);
+  ACTIVIDAD = data || [];
 }
 
 const EST_NC_LBL = { pendiente:"Pendiente", en_tratamiento:"En tratamiento", cerrado:"Cerrado" };
@@ -1577,7 +1685,7 @@ function bind() {
   document.querySelectorAll(".navbtn").forEach(b=>b.onclick=async()=>{
     if(b.dataset.tab==="proj") activo=null;
     tab=b.dataset.tab;
-    if(tab==="dash"){ await cargarProyectos(); await cargarTareasTodas(); }
+    if(tab==="dash"){ await cargarProyectos(); await cargarTareasTodas(); await cargarActividad(); }
     if(tab==="desvios"){ await cargarDesvios(); }
     if(tab==="audit"){ await cargarAuditorias(); }
     render();
