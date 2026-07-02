@@ -26,12 +26,24 @@ const puedeTildar = (t) => esCoord() || soyResponsable(t);
 const ESTADO_LBL = { sin_iniciar:"Sin iniciar", en_ejecucion:"En ejecución", terminado:"Terminado", pausado:"Pausado" };
 
 // ---------- AUTH ----------
+// Supabase dispara este evento cuando la persona llega desde el link de
+// "recuperar contraseña" del email. Es el chequeo oficial (mas confiable
+// que parsear el hash a mano, por si Supabase cambia el formato del link).
+sb.auth.onAuthStateChange((event) => {
+  if (event === "PASSWORD_RECOVERY") mostrarPantalla("nueva-clave");
+});
+
 async function init() {
+  // refuerzo: si el link trae type=recovery en el hash, vamos directo
+  // a la pantalla de nueva clave sin esperar el evento de arriba.
+  if (location.hash.includes("type=recovery")) {
+    mostrarPantalla("nueva-clave");
+    return;
+  }
   const { data:{ session } } = await sb.auth.getSession();
   if (!session) return mostrarLogin();
   await cargarPerfil(session.user);
-  $("#login").style.display = "none";
-  $("#app").style.display = "flex";
+  mostrarPantalla("app");
   await cargarProyectos();
   await cargarTareasTodas();
   await cargarActividad();
@@ -43,13 +55,53 @@ async function cargarPerfil(user) {
   $("#user-name").textContent = PERFIL.nombre;
   $("#user-rol").textContent = PERFIL.rol;
 }
-function mostrarLogin(){ $("#login").style.display="flex"; $("#app").style.display="none"; }
+
+// Las 4 pantallas posibles antes/despues de loguearse. Solo una visible a la vez.
+function mostrarPantalla(cual) {
+  const ids = ["login", "recuperar", "nueva-clave", "app"];
+  ids.forEach(id => {
+    const el = $("#" + id);
+    if (!el) return;
+    el.style.display = (id === cual) ? "flex" : "none";
+  });
+}
+function mostrarLogin(){ mostrarPantalla("login"); }
+
 async function login() {
   $("#login-error").textContent = "";
   const { error } = await sb.auth.signInWithPassword({
     email: $("#email").value.trim(), password: $("#password").value });
   if (error) { $("#login-error").textContent = error.message; return; }
   init();
+}
+
+// ---------- RECUPERAR CONTRASEÑA ----------
+// Paso 1: la persona pide el link (se manda a su email via Supabase Auth).
+async function enviarRecuperacion() {
+  $("#rec-error").textContent = "";
+  $("#rec-ok").style.display = "none";
+  const email = $("#rec-email").value.trim();
+  if (!email) { $("#rec-error").textContent = "Ingresá tu email."; return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: location.origin + location.pathname,
+  });
+  if (error) { $("#rec-error").textContent = error.message; return; }
+  $("#rec-ok").style.display = "block";
+}
+
+// Paso 2: la persona vuelve del link del email (Supabase ya la deja
+// autenticada temporalmente) y elige su contraseña nueva.
+async function guardarClaveNueva() {
+  $("#nc-error").textContent = "";
+  const p1 = $("#nc-pass1").value, p2 = $("#nc-pass2").value;
+  if (!p1 || p1.length < 6) { $("#nc-error").textContent = "La contraseña debe tener al menos 6 caracteres."; return; }
+  if (p1 !== p2) { $("#nc-error").textContent = "Las contraseñas no coinciden."; return; }
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  if (error) { $("#nc-error").textContent = error.message; return; }
+  history.replaceState(null, "", location.pathname); // limpia el hash de recovery
+  toast("Contraseña actualizada. Ya podés iniciar sesión.");
+  await sb.auth.signOut();
+  mostrarLogin();
 }
 async function logout(){ await sb.auth.signOut(); location.reload(); }
 
@@ -2024,6 +2076,14 @@ function fillNuevoResp(){
 window.addEventListener("DOMContentLoaded", ()=>{
   $("#btn-login").onclick = login;
   $("#password").addEventListener("keydown", e=>{ if(e.key==="Enter") login(); });
+
+  $("#link-olvide").onclick = (e)=>{ e.preventDefault(); mostrarPantalla("recuperar"); };
+  $("#link-volver-login").onclick = (e)=>{ e.preventDefault(); mostrarPantalla("login"); };
+  $("#btn-recuperar").onclick = enviarRecuperacion;
+  $("#rec-email").addEventListener("keydown", e=>{ if(e.key==="Enter") enviarRecuperacion(); });
+  $("#btn-guardar-clave").onclick = guardarClaveNueva;
+  $("#nc-pass2").addEventListener("keydown", e=>{ if(e.key==="Enter") guardarClaveNueva(); });
+
   fillNuevoResp();
   bindModales();
   init();
