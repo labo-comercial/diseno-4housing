@@ -1099,16 +1099,23 @@ function nodoTarea(t, depth) {
   const editFechas = esCoord() && !esPlanAuto;
   let fechasHTML = "";
   if (t.nivel !== "rubro" && !t.selecciona_modo3 && !t.analisis_general && !t.revision_planta) {
-    const desvIni = desvioDias(t.base_inicio, t.fecha_inicio);
-    const desvFin = desvioDias(t.base_fin, t.fecha_fin);
-    const tagDesv = (d) => d===null ? "" : (d===0 ? `<span class="desv ok">en fecha</span>`
-      : d>0 ? `<span class="desv late">+${d}d</span>` : `<span class="desv early">${d}d</span>`);
+    const st = estadoTarea(t);
+    // vs. plan: en fecha / +Nd / -Nd (igual que antes)
+    const tagPlan = (p) => p.estado===null ? "" : (p.estado==="en_fecha" ? `<span class="desv ok">en fecha</span>`
+      : p.estado==="atrasada" ? `<span class="desv late">+${p.dias}d vs plan</span>` : `<span class="desv early">${p.dias}d vs plan</span>`);
+    // vs. hoy: solo alertamos cuando aporta info (vencida / por vencer). Cumplida y al día no ensucian.
+    const tagHoy = (h) => {
+      if (h.estado==="vencida")     return `<span class="desv over">vencida · pendiente hace ${Math.abs(h.dias)}d</span>`;
+      if (h.estado==="por_vencer")  return `<span class="desv soon">vence en ${h.dias}d</span>`;
+      return "";
+    };
     fechasHTML = `<div class="fechas">
          <input type="date" class="f-ini" data-id="${t.id}" value="${t.fecha_inicio||''}" ${editFechas?'':'readonly'} title="Inicio">
          <span class="f-sep">-></span>
          <input type="date" class="f-fin" data-id="${t.id}" value="${t.fecha_fin||''}" ${editFechas?'':'readonly'} title="Fin">
          ${t.base_inicio||t.base_fin?`<span class="base-lbl" title="Linea base">base: ${t.base_inicio||'—'} / ${t.base_fin||'—'}</span>`:""}
-         ${tagDesv(desvFin)}
+         ${tagPlan(st.plan)}
+         ${tagHoy(st.hoy)}
        </div>`;
   }
 
@@ -1143,6 +1150,39 @@ function desvioDias(base, vig){
   if (!base || !vig) return null;
   const a = new Date(base), b = new Date(vig);
   return Math.round((b - a) / 86400000);
+}
+
+// FUENTE UNICA DE VERDAD del estado de una tarea.
+// Todo (dashboard y detalle) debe leer de aca para evitar criterios divergentes.
+// Devuelve dos dimensiones independientes:
+//   - plan:  compara fecha vigente vs. linea base -> mide si se corrio el plan
+//            { estado: 'en_fecha' | 'atrasada' | 'adelantada', dias }
+//   - hoy:   compara fecha fin vs. HOY + si esta cumplida -> mide si algo quedo pendiente y ya paso
+//            { estado: 'cumplida' | 'vencida' | 'por_vencer' | 'al_dia', dias }
+function estadoTarea(t){
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const hoyISO = hoy.toISOString().slice(0,10);
+  const en7 = new Date(hoy); en7.setDate(en7.getDate()+7);
+
+  // --- dimension PLAN (vigente vs base) ---
+  const dPlan = desvioDias(t.base_fin, t.fecha_fin);
+  let plan = { estado:null, dias:dPlan };
+  if (dPlan !== null) {
+    plan.estado = dPlan === 0 ? "en_fecha" : (dPlan > 0 ? "atrasada" : "adelantada");
+  }
+
+  // --- dimension HOY (fin vs hoy + cumplida) ---
+  let hoyDim = { estado:null, dias:null };
+  if (t.cumplido) {
+    hoyDim.estado = "cumplida";
+  } else if (t.fecha_fin) {
+    const diasAHoy = Math.round((new Date(t.fecha_fin) - hoy) / 86400000); // + = falta, - = paso
+    hoyDim.dias = diasAHoy;
+    if (t.fecha_fin < hoyISO)                 hoyDim.estado = "vencida";
+    else if (new Date(t.fecha_fin) <= en7)    hoyDim.estado = "por_vencer";
+    else                                      hoyDim.estado = "al_dia";
+  }
+  return { plan, hoy: hoyDim };
 }
 
 function renderDetalle() {
@@ -1263,10 +1303,10 @@ function renderDash() {
       <span class="al-fecha">${a.p.plazo_entrega||'—'}</span>
     </div>`).join("") : `<p class="empty">Todos los proyectos en plazo.</p>`;
 
-  // ----- ALERTAS: vencidas y por vencer (tareas hoja, no cumplidas, en proyectos activos) -----
+  // ----- ALERTAS: vencidas y por vencer (mismo criterio unificado que el detalle) -----
   const pend = hojas.filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.fecha_fin);
-  const vencidas = pend.filter(x => x.fecha_fin < HOY);
-  const porVencer = pend.filter(x => x.fecha_fin >= HOY && new Date(x.fecha_fin) <= en7);
+  const vencidas = pend.filter(x => estadoTarea(x).hoy.estado === "vencida");
+  const porVencer = pend.filter(x => estadoTarea(x).hoy.estado === "por_vencer");
 
   // ----- CARGA LABORAL: tareas pendientes asignadas por persona (proyectos activos) -----
   const carga = {};
@@ -1289,12 +1329,11 @@ function renderDash() {
     ["Tareas en alerta", vencidas.length+porVencer.length, vencidas.length? "var(--red)":"var(--amber)"],
   ].map(([k,v,c])=>`<div class="stat"><div class="k">${k}</div><div class="v" style="color:${c}">${v}</div></div>`).join("");
 
-  // ----- ATRASOS REALES: tareas hoja cuya fecha vigente supera su linea base -----
-  // (mide el atraso contra el plan; la base de Etapa 3 ya es estable)
+  // ----- ATRASOS REALES: tareas hoja atrasadas vs. su linea base (dimension PLAN) -----
   const atrasadas = hojas
     .filter(x => !x.cumplido && proyActivo(x.proyecto_id) && x.base_fin && x.fecha_fin)
-    .map(x => ({ ...x, dias: Math.round((new Date(x.fecha_fin) - new Date(x.base_fin))/86400000) }))
-    .filter(x => x.dias > 0)
+    .filter(x => estadoTarea(x).plan.estado === "atrasada")
+    .map(x => ({ ...x, dias: estadoTarea(x).plan.dias }))
     .sort((a,b)=> b.dias - a.dias);
 
   // bloque alertas
