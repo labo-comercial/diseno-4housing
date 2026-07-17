@@ -1101,7 +1101,8 @@ function nodoTarea(t, depth) {
     const itemMinuta = (m) => `<div class="min-ro">
         <div class="ag-fechas-ro">${(m.fecha_hora||'').replace('T',' ')||'(sin fecha)'} · ${m.creado_por_nombre||'—'}</div>
         ${m.temas?`<div><b>Temas:</b> ${m.temas.replace(/</g,'&lt;')}</div>`:''}
-        ${m.requiere_revision?`<div><b>Revisiones:</b> ${(m.detalle||'sí').replace(/</g,'&lt;')}</div>`:'<div>Sin revisiones pendientes</div>'}
+        ${m.detalle?`<div><b>${m.requiere_revision?'Revisiones':'Notas'}:</b> ${m.detalle.replace(/</g,'&lt;')}</div>`:''}
+        ${!m.requiere_revision && !m.detalle?'<div>Sin revisiones pendientes</div>':''}
       </div>`;
     const histHTML = historial.length
       ? `<div class="ag-tit" style="margin-top:12px">Historial (${historial.length})</div>${historial.map(itemMinuta).join("")}`
