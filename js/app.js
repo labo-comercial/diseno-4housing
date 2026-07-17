@@ -120,8 +120,9 @@ async function cargarTareas(proyectoId) {
     .eq("proyecto_id", proyectoId).eq("eliminada", false)
     .order("etapa").order("orden");
   TAREAS = data || [];
-  const { data: minutasData } = await sb.from("minutas").select("*")
+  const { data: minutasData, error: eMin } = await sb.from("minutas").select("*")
     .eq("proyecto_id", proyectoId).order("creado_en", { ascending: false });
+  if (eMin) console.error("cargarTareas (minutas):", eMin);
   MINUTAS = minutasData || [];
 }
 
@@ -609,7 +610,7 @@ async function guardarMinuta(tareaId, minuta) {
   if (!esCoord() && !soyResponsable(t)) {
     toast("Solo coordinación o el responsable cargan la minuta"); return;
   }
-  await sb.from("minutas").insert({
+  const { error } = await sb.from("minutas").insert({
     tarea_id: tareaId,
     proyecto_id: activo.id,
     fecha_hora: minuta.fecha_hora || null,
@@ -619,6 +620,11 @@ async function guardarMinuta(tareaId, minuta) {
     creado_por: PERFIL ? PERFIL.id : null,
     creado_por_nombre: PERFIL ? PERFIL.nombre : null,
   });
+  if (error) {
+    console.error("guardarMinuta:", error);
+    toast("No se pudo guardar la minuta: " + error.message);
+    return;
+  }
   await logActividad("minuta", `Minuta cargada: ${t.nombre||""}`,
     { tarea_id: tareaId, nombre: t.nombre, requiere_revision: !!minuta.requiere_revision });
   await cargarTareas(activo.id); render();
