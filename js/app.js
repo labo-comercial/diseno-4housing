@@ -939,6 +939,10 @@ function nodoTarea(t, depth) {
     const hechos = hijos.filter(h=>h.cumplido).length;
     checkHTML = `<span class="grp-count ${esGate?'gate':''}">${hechos}/${tot}</span>`;
   }
+  // los nodos con hijos (gates) nunca tildan su propio "cumplido": su avance
+  // real es que todos los hijos esten cumplidos. Sin esto, el badge de fecha
+  // los muestra "vencida" para siempre aunque ya esten 6/6.
+  const hijosCumplidos = tieneHijos && hijos.every(h => h.cumplido);
 
   // responsable: SOLO la coordinacion puede cambiarlo (desplegable);
   // el resto lo ve como texto. Si la tarea esta atada a un rol de proyecto,
@@ -1099,7 +1103,7 @@ function nodoTarea(t, depth) {
   const editFechas = esCoord() && !esPlanAuto;
   let fechasHTML = "";
   if (t.nivel !== "rubro" && !t.selecciona_modo3 && !t.analisis_general && !t.revision_planta) {
-    const st = estadoTarea(t);
+    const st = estadoTarea(tieneHijos ? {...t, cumplido: hijosCumplidos} : t);
     // vs. plan: en fecha / +Nd / -Nd (igual que antes)
     const tagPlan = (p) => p.estado===null ? "" : (p.estado==="en_fecha" ? `<span class="desv ok">en fecha</span>`
       : p.estado==="atrasada" ? `<span class="desv late">+${p.dias}d vs plan</span>` : `<span class="desv early">${p.dias}d vs plan</span>`);
