@@ -55,3 +55,9 @@ en los proyectos nuevos. Los proyectos ya creados no se modifican retroactivamen
 - Conectar el disparador "cotización ganada" desde la app de Ventas (hoy la carga
   es manual, ideal para la etapa de prueba).
 - Motor de auditoría de planos (lectura de DXF y detección de interferencias).
+
+## Migraciones
+
+- `MIGRACION_MINUTAS.sql`: crea `public.minutas` (historial append-only de
+  minutas de reunión; reemplaza el campo `tareas.minuta` que se pisaba en
+  cada guardado). Correr una sola vez en el SQL Editor de Supabase.

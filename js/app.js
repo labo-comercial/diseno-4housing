@@ -9,6 +9,7 @@ let PROYECTOS = [];
 let activo = null;      // proyecto abierto
 let TAREAS = [];        // tareas del proyecto abierto (planas)
 let TAREAS_ALL = [];    // tareas de todos los proyectos (para el dashboard)
+let MINUTAS = [];       // minutas del proyecto abierto (append-only, mas reciente primero)
 let ACTIVIDAD = [];     // historial de actividad reciente (para el dashboard)
 let tab = "dash";
 
@@ -119,6 +120,9 @@ async function cargarTareas(proyectoId) {
     .eq("proyecto_id", proyectoId).eq("eliminada", false)
     .order("etapa").order("orden");
   TAREAS = data || [];
+  const { data: minutasData } = await sb.from("minutas").select("*")
+    .eq("proyecto_id", proyectoId).order("creado_en", { ascending: false });
+  MINUTAS = minutasData || [];
 }
 
 // ---------- HISTORIAL DE ACTIVIDAD (timeline unificado) ----------
@@ -597,12 +601,24 @@ async function cancelarRevision() {
 }
 
 // ---------- MINUTAS (reuniones de validacion) ----------
+// Cada minuta es un registro nuevo en public.minutas (append-only: no hay
+// policy de update/delete, asi que una vez guardada queda fija). El panel
+// muestra el historial completo; no se pisa lo cargado antes.
 async function guardarMinuta(tareaId, minuta) {
   const t = TAREAS.find(x=>x.id===tareaId)||{};
   if (!esCoord() && !soyResponsable(t)) {
     toast("Solo coordinación o el responsable cargan la minuta"); return;
   }
-  await sb.from("tareas").update({ minuta }).eq("id", tareaId);
+  await sb.from("minutas").insert({
+    tarea_id: tareaId,
+    proyecto_id: activo.id,
+    fecha_hora: minuta.fecha_hora || null,
+    temas: minuta.temas || null,
+    requiere_revision: !!minuta.requiere_revision,
+    detalle: minuta.detalle || null,
+    creado_por: PERFIL ? PERFIL.id : null,
+    creado_por_nombre: PERFIL ? PERFIL.nombre : null,
+  });
   await logActividad("minuta", `Minuta cargada: ${t.nombre||""}`,
     { tarea_id: tareaId, nombre: t.nombre, requiere_revision: !!minuta.requiere_revision });
   await cargarTareas(activo.id); render();
@@ -1068,30 +1084,38 @@ function nodoTarea(t, depth) {
     }
   }
 
-  // panel de MINUTA (reuniones de validacion)
+  // panel de MINUTA (reuniones de validacion). Append-only: cada guardado
+  // crea un registro nuevo en public.minutas (no se edita ni se pisa lo
+  // cargado antes). El form siempre arranca en blanco; abajo se ve el
+  // historial completo, de solo lectura para todos.
   let minutaHTML = "";
   if (t.minuta_flag) {
-    const m = t.minuta || {};
     const editable = esCoord() || soyResponsable(t);
+    const historial = (MINUTAS||[]).filter(m => m.tarea_id === t.id); // ya viene mas reciente primero
+    const itemMinuta = (m) => `<div class="min-ro">
+        <div class="ag-fechas-ro">${(m.fecha_hora||'').replace('T',' ')||'(sin fecha)'} · ${m.creado_por_nombre||'—'}</div>
+        ${m.temas?`<div><b>Temas:</b> ${m.temas.replace(/</g,'&lt;')}</div>`:''}
+        ${m.requiere_revision?`<div><b>Revisiones:</b> ${(m.detalle||'sí').replace(/</g,'&lt;')}</div>`:'<div>Sin revisiones pendientes</div>'}
+      </div>`;
+    const histHTML = historial.length
+      ? `<div class="ag-tit" style="margin-top:12px">Historial (${historial.length})</div>${historial.map(itemMinuta).join("")}`
+      : "";
     if (editable) {
       minutaHTML = `<div class="ag-panel">
-        <div class="ag-tit">Minuta de reunión</div>
+        <div class="ag-tit">Nueva minuta de reunión</div>
         <div class="ag-fechas">
-          <div class="ag-f"><label>Fecha y hora</label><input type="datetime-local" class="min-fh" data-id="${t.id}" value="${m.fecha_hora||''}"></div>
+          <div class="ag-f"><label>Fecha y hora</label><input type="datetime-local" class="min-fh" data-id="${t.id}"></div>
         </div>
         <div class="min-field"><label>Temas tratados</label>
-          <textarea class="min-temas" data-id="${t.id}" rows="3" placeholder="Resumen de lo conversado…">${(m.temas||'').replace(/</g,'&lt;')}</textarea></div>
-        <label class="min-check"><input type="checkbox" class="min-req" data-id="${t.id}" ${m.requiere_revision?'checked':''}> Requiere revisiones del responsable</label>
+          <textarea class="min-temas" data-id="${t.id}" rows="3" placeholder="Resumen de lo conversado…"></textarea></div>
+        <label class="min-check"><input type="checkbox" class="min-req" data-id="${t.id}"> Requiere revisiones del responsable</label>
         <div class="min-field"><label>Detalle de revisiones</label>
-          <textarea class="min-detalle" data-id="${t.id}" rows="2" placeholder="Qué debe revisar y quién…">${(m.detalle||'').replace(/</g,'&lt;')}</textarea></div>
+          <textarea class="min-detalle" data-id="${t.id}" rows="2" placeholder="Qué debe revisar y quién…"></textarea></div>
         <button class="btn sm min-save" data-id="${t.id}" style="margin-top:8px">Guardar minuta</button>
+        ${histHTML}
       </div>`;
-    } else if (m.fecha_hora || m.temas) {
-      minutaHTML = `<div class="ag-panel ro"><div class="ag-tit">Minuta</div>
-        <div class="ag-fechas-ro">${(m.fecha_hora||'').replace('T',' ')}</div>
-        ${m.temas?`<div class="min-ro"><b>Temas:</b> ${m.temas.replace(/</g,'&lt;')}</div>`:''}
-        ${m.requiere_revision?`<div class="min-ro"><b>Revisiones:</b> ${(m.detalle||'sí').replace(/</g,'&lt;')}</div>`:'<div class="min-ro">Sin revisiones pendientes</div>'}
-      </div>`;
+    } else if (historial.length) {
+      minutaHTML = `<div class="ag-panel ro"><div class="ag-tit">Minutas (${historial.length})</div>${historial.map(itemMinuta).join("")}</div>`;
     }
   }
 
