@@ -27,100 +27,74 @@ const puedeTildar = (t) => esCoord() || soyResponsable(t);
 const ESTADO_LBL = { sin_iniciar:"Sin iniciar", en_ejecucion:"En ejecución", terminado:"Terminado", pausado:"Pausado" };
 
 // ---------- AUTH ----------
-// Supabase dispara este evento cuando la persona llega desde el link de
-// "recuperar contraseña" del email. Es el chequeo oficial (mas confiable
-// que parsear el hash a mano, por si Supabase cambia el formato del link).
-sb.auth.onAuthStateChange((event) => {
-  if (event === "PASSWORD_RECOVERY") mostrarPantalla("nueva-clave");
-});
+// El login vive en el PORTAL (Microsoft SSO). Esta app comparte proyecto
+// Supabase y origen con el portal, asi que la sesion llega sola por
+// localStorage: aca solo se verifica y, si falta, se redirige al portal.
 
 async function init() {
-  // refuerzo: si el link trae type=recovery en el hash, vamos directo
-  // a la pantalla de nueva clave sin esperar el evento de arriba.
-  if (location.hash.includes("type=recovery")) {
-    mostrarPantalla("nueva-clave");
-    return;
-  }
   const { data:{ session } } = await sb.auth.getSession();
-  if (!session) return mostrarLogin();
-  await cargarPerfil(session.user);
+  if (!session) return irAlPortal();
+  const ok = await cargarPerfil(session.user);
+  if (!ok) return; // sin sector diseno: cargarPerfil ya mostro el aviso
   mostrarPantalla("app");
   await cargarProyectos();
   await cargarTareasTodas();
   await cargarActividad();
   render();
 }
+
+// Perfil del portal: nombre/activo/es_direccion en `perfiles`, cargo del
+// sector en `perfiles_sector`. Direccion opera como admin. El resto usa su
+// cargo: admin | coordinador | diseno | lectura (misma semantica que antes).
 async function cargarPerfil(user) {
-  const { data } = await sb.from("perfiles").select("*").eq("id", user.id).single();
-  PERFIL = data || { id:user.id, nombre:user.email, rol:"lectura" };
+  const [{ data: perfil }, { data: ps }] = await Promise.all([
+    sb.from("perfiles").select("nombre, activo, es_direccion").eq("id", user.id).maybeSingle(),
+    sb.from("perfiles_sector").select("cargo").eq("perfil_id", user.id).eq("sector", "diseno").maybeSingle(),
+  ]);
+  const rol = (perfil && perfil.es_direccion) ? "admin" : (ps ? ps.cargo : null);
+  if (!perfil || !perfil.activo || !rol) {
+    mostrarPantalla("sin-acceso");
+    return false;
+  }
+  PERFIL = { id: user.id, nombre: perfil.nombre || user.email, rol };
+  window.PERFIL = PERFIL; // para auditoria.js (rolUsuario)
   $("#user-name").textContent = PERFIL.nombre;
   $("#user-rol").textContent = PERFIL.rol;
+  return true;
 }
 
-// Las 4 pantallas posibles antes/despues de loguearse. Solo una visible a la vez.
+// Pantallas: "app" (normal) o "sin-acceso" (logueado pero sin sector diseno).
 function mostrarPantalla(cual) {
-  const ids = ["login", "recuperar", "nueva-clave", "app"];
+  const ids = ["sin-acceso", "app"];
   ids.forEach(id => {
     const el = $("#" + id);
     if (!el) return;
     el.style.display = (id === cual) ? "flex" : "none";
   });
 }
-function mostrarLogin(){ mostrarPantalla("login"); }
 
-async function login() {
-  $("#login-error").textContent = "";
-  const { error } = await sb.auth.signInWithPassword({
-    email: $("#email").value.trim(), password: $("#password").value });
-  if (error) { $("#login-error").textContent = error.message; return; }
-  init();
+function irAlPortal() {
+  window.location.href = window.PORTAL_URL || "/portal/";
 }
 
-// ---------- RECUPERAR CONTRASEÑA ----------
-// Paso 1: la persona pide el link (se manda a su email via Supabase Auth).
-async function enviarRecuperacion() {
-  $("#rec-error").textContent = "";
-  $("#rec-ok").style.display = "none";
-  const email = $("#rec-email").value.trim();
-  if (!email) { $("#rec-error").textContent = "Ingresá tu email."; return; }
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    redirectTo: location.origin + location.pathname,
-  });
-  if (error) { $("#rec-error").textContent = error.message; return; }
-  $("#rec-ok").style.display = "block";
-}
-
-// Paso 2: la persona vuelve del link del email (Supabase ya la deja
-// autenticada temporalmente) y elige su contraseña nueva.
-async function guardarClaveNueva() {
-  $("#nc-error").textContent = "";
-  const p1 = $("#nc-pass1").value, p2 = $("#nc-pass2").value;
-  if (!p1 || p1.length < 6) { $("#nc-error").textContent = "La contraseña debe tener al menos 6 caracteres."; return; }
-  if (p1 !== p2) { $("#nc-error").textContent = "Las contraseñas no coinciden."; return; }
-  const { error } = await sb.auth.updateUser({ password: p1 });
-  if (error) { $("#nc-error").textContent = error.message; return; }
-  history.replaceState(null, "", location.pathname); // limpia el hash de recovery
-  toast("Contraseña actualizada. Ya podés iniciar sesión.");
-  await sb.auth.signOut();
-  mostrarLogin();
-}
-async function logout(){ await sb.auth.signOut(); location.reload(); }
+// Cerrar sesion cierra la sesion COMPARTIDA (portal y demas apps migradas).
+async function logout(){ await sb.auth.signOut(); irAlPortal(); }
 
 // ---------- DATOS ----------
 async function cargarProyectos() {
-  const { data } = await sb.from("v_proyectos").select("*").order("creado_en",{ascending:false});
+  const { data } = await sb.from("v_diseno_proyectos").select("*").order("creado_en",{ascending:false});
   PROYECTOS = data || [];
 }
 async function cargarTareasTodas() {
-  const { data } = await sb.from("tareas").select("*").eq("eliminada", false);
+  const { data } = await sb.from("diseno_tareas").select("*").eq("eliminada", false);
   TAREAS_ALL = data || [];
 }
 async function cargarTareas(proyectoId) {
-  const { data } = await sb.from("tareas").select("*")
+  const { data } = await sb.from("diseno_tareas").select("*")
     .eq("proyecto_id", proyectoId).eq("eliminada", false)
     .order("etapa").order("orden");
   TAREAS = data || [];
-  const { data: minutasData, error: eMin } = await sb.from("minutas").select("*")
+  const { data: minutasData, error: eMin } = await sb.from("diseno_minutas").select("*")
     .eq("proyecto_id", proyectoId).order("creado_en", { ascending: false });
   if (eMin) console.error("cargarTareas (minutas):", eMin);
   MINUTAS = minutasData || [];
@@ -135,7 +109,7 @@ async function cargarTareas(proyectoId) {
 async function logActividad(tipo, descripcion, detalle, proyecto) {
   try {
     const p = proyecto || activo || null;
-    await sb.from("historial_actividad").insert({
+    await sb.from("diseno_historial_actividad").insert({
       proyecto_id: p ? p.id : null,
       proyecto_nombre: p ? p.nombre : null,
       tipo, descripcion, detalle: detalle || null,
@@ -149,7 +123,7 @@ async function logActividad(tipo, descripcion, detalle, proyecto) {
 
 // ---------- CREAR PROYECTO (clona la plantilla) ----------
 async function crearProyecto(campos) {
-  const { data:proy, error } = await sb.from("proyectos").insert(campos).select().single();
+  const { data:proy, error } = await sb.from("diseno_proyectos").insert(campos).select().single();
   if (error) throw error;
 
   // 1) aplanar la plantilla en filas, cada una con un _ref local único y
@@ -199,7 +173,7 @@ async function crearProyecto(campos) {
       auto_ia:f.auto_ia, revision_planta:f.revision_planta, minuta_flag:f.minuta_flag,
       parent_id: f._parentRef ? idDeRef[f._parentRef] : null,
     }));
-    const { data:ins, error:eIns } = await sb.from("tareas").insert(payload)
+    const { data:ins, error:eIns } = await sb.from("diseno_tareas").insert(payload)
       .select("id, etapa, orden, nivel, parent_id");
     if (eIns) throw eIns;
 
@@ -216,7 +190,7 @@ async function crearProyecto(campos) {
   }
 
   // 3) registro de creacion
-  await sb.from("historial_proyecto").insert({
+  await sb.from("diseno_historial_proyecto").insert({
     proyecto_id: proy.id, proyecto_nombre: proy.nombre,
     accion: "crear", detalle: { campos }, hecho_por: PERFIL.id });
   await logActividad("proyecto_crear", `Proyecto creado: ${proy.nombre}`, { campos }, proy);
@@ -270,7 +244,7 @@ async function toggleCheck(t) {
   const blo = gateBloqueado(t);
   if (blo && !t.cumplido) { toast(`Bloqueado: completa primero ${blo}`); return; }
   const nuevo = !t.cumplido;
-  await sb.from("tareas").update({ cumplido:nuevo, cumplido_en: nuevo?new Date().toISOString():null }).eq("id", t.id);
+  await sb.from("diseno_tareas").update({ cumplido:nuevo, cumplido_en: nuevo?new Date().toISOString():null }).eq("id", t.id);
   await logActividad(
     nuevo ? "tarea_tildada" : "tarea_destildada",
     `${nuevo ? "Tildada" : "Destildada"}: ${t.nombre} (Etapa ${t.etapa})`,
@@ -288,11 +262,11 @@ async function toggleCheck(t) {
 async function asignarRol(rolKey, persona) {
   if (!esCoord()) { toast("Solo la coordinacion puede asignar responsables"); return; }
   // 1) guardar en el proyecto
-  await sb.from("proyectos").update({ [rolKey]: persona || null }).eq("id", activo.id);
+  await sb.from("diseno_proyectos").update({ [rolKey]: persona || null }).eq("id", activo.id);
   // 2) cascada: actualizar responsable de todas las tareas con ese rol
-  await sb.from("tareas").update({ responsable: persona || null })
+  await sb.from("diseno_tareas").update({ responsable: persona || null })
     .eq("proyecto_id", activo.id).eq("rol", rolKey).eq("eliminada", false);
-  await sb.from("historial_proyecto").insert({
+  await sb.from("diseno_historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion: "editar",
     detalle: { rol: rolKey, asignado: persona }, hecho_por: PERFIL.id });
   await logActividad("roles_asignados",
@@ -305,7 +279,7 @@ async function asignarRol(rolKey, persona) {
   const todos = window.ROLES_PROYECTO.every(r => !!activo[r.key]);
   const tAsig = TAREAS.find(t => t.asigna_roles);
   if (tAsig && !!tAsig.cumplido !== todos) {
-    await sb.from("tareas").update({
+    await sb.from("diseno_tareas").update({
       cumplido: todos,
       cumplido_en: todos ? new Date().toISOString() : null
     }).eq("id", tAsig.id);
@@ -331,14 +305,14 @@ async function confirmarMotivo() {
   const motivo = $("#motivo-text").value.trim();
   if (!motivo) { $("#motivo-err").textContent = "El motivo es obligatorio."; return; }
   const { tarea, nuevo } = pendienteResp;
-  await sb.from("historial_responsable").insert({
+  await sb.from("diseno_historial_responsable").insert({
     tarea_id: tarea.id, proyecto_id: activo.id,
     resp_anterior: tarea.responsable, resp_nuevo: nuevo, motivo,
     cambiado_por: PERFIL.id });
   await logActividad("responsable_cambio",
     `${tarea.nombre}: ${tarea.responsable||"(sin asignar)"} → ${nuevo||"(sin asignar)"}`,
     { tarea_id: tarea.id, nombre: tarea.nombre, resp_anterior: tarea.responsable, resp_nuevo: nuevo, motivo });
-  await sb.from("tareas").update({ responsable: nuevo || null }).eq("id", tarea.id);
+  await sb.from("diseno_tareas").update({ responsable: nuevo || null }).eq("id", tarea.id);
   $("#modal-motivo").classList.remove("open");
   await cargarTareas(activo.id);
   render();
@@ -351,7 +325,7 @@ async function eliminarTarea(t) {
   // eliminar también descendientes
   const ids = [t.id]; let frente=[t.id];
   while (frente.length){ const h = TAREAS.filter(x=>frente.includes(x.parent_id)).map(x=>x.id); ids.push(...h); frente=h; }
-  await sb.from("tareas").update({ eliminada:true }).in("id", ids);
+  await sb.from("diseno_tareas").update({ eliminada:true }).in("id", ids);
   await cargarTareas(activo.id); await cargarProyectos();
   activo = PROYECTOS.find(p=>p.id===activo.id);
   render();
@@ -377,8 +351,8 @@ async function guardarEdicionProyecto(){
   if (faltan.length){ $("#edit-err").textContent = "Completá marca Y modelo en: " + faltan.join(", "); return; }
   const antes = { nro_if:activo.nro_if, cliente:activo.cliente, nombre:activo.nombre, ficha:activo.ficha };
   const campos = { nro_if:nro, cliente:cli, nombre:nom, ficha:$("#e-ficha").value.trim()||null, inputs: leerFichaInputs("efi-body") };
-  await sb.from("proyectos").update(campos).eq("id", activo.id);
-  await sb.from("historial_proyecto").insert({
+  await sb.from("diseno_proyectos").update(campos).eq("id", activo.id);
+  await sb.from("diseno_historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: nom, accion:"editar",
     detalle: { antes, despues: campos }, hecho_por: PERFIL.id });
   await logActividad("proyecto_editar", `Proyecto editado: ${nom}`, { antes, despues: campos });
@@ -391,12 +365,12 @@ async function guardarEdicionProyecto(){
 async function eliminarProyecto(){
   if (!esCoord()) { toast("Solo la coordinacion puede eliminar proyectos"); return; }
   if (!confirm(`Eliminar el proyecto "${activo.nombre}"? Esta accion no se puede deshacer.`)) return;
-  await sb.from("historial_proyecto").insert({
+  await sb.from("diseno_historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"eliminar",
     detalle: { nro_if:activo.nro_if, cliente:activo.cliente }, hecho_por: PERFIL.id });
   await logActividad("proyecto_eliminar", `Proyecto eliminado: ${activo.nombre}`,
     { nro_if: activo.nro_if, cliente: activo.cliente });
-  await sb.from("proyectos").delete().eq("id", activo.id);
+  await sb.from("diseno_proyectos").delete().eq("id", activo.id);
   activo = null; await cargarProyectos(); tab="proj"; render();
   toast("Proyecto eliminado (queda registro)");
 }
@@ -406,7 +380,7 @@ async function crearDesvio(){
   if (!esCoord()) { toast("Solo la coordinacion puede cargar registros"); return; }
   const titulo = $("#nc-titulo").value.trim();
   if (!titulo){ $("#nc-err").textContent="El titulo es obligatorio."; return; }
-  await sb.from("desvios_nc").insert({
+  await sb.from("diseno_desvios_nc").insert({
     tipo: $("#nc-tipo").value,
     titulo,
     descripcion: $("#nc-desc").value.trim()||null,
@@ -454,7 +428,7 @@ async function guardarFechaDirecto(t, campo, valor, fijarBase) {
   const baseCol = campo === "inicio" ? "base_inicio"  : "base_fin";
   const upd = { [vigCol]: valor || null };
   if (fijarBase) upd[baseCol] = valor || null;
-  await sb.from("tareas").update(upd).eq("id", t.id);
+  await sb.from("diseno_tareas").update(upd).eq("id", t.id);
   await cargarTareas(activo.id);
   render();
 }
@@ -464,7 +438,7 @@ async function confirmarDesvioFecha() {
   if (!motivo) { $("#df-err").textContent = "Elegi un motivo."; return; }
   const { tarea, campo, valorNuevo, valorViejo } = pendienteFecha;
   const vigCol = campo === "inicio" ? "fecha_inicio" : "fecha_fin";
-  await sb.from("historial_fechas").insert({
+  await sb.from("diseno_historial_fechas").insert({
     tarea_id: tarea.id, proyecto_id: activo.id, campo,
     fecha_anterior: valorViejo, fecha_nueva: valorNuevo || null,
     motivo, detalle: $("#df-detalle").value.trim() || null,
@@ -472,7 +446,7 @@ async function confirmarDesvioFecha() {
   await logActividad("fecha_cambio",
     `${tarea.nombre}: ${campo} ${valorViejo||"(vacío)"} → ${valorNuevo||"(vacío)"} (${motivo})`,
     { tarea_id: tarea.id, nombre: tarea.nombre, campo, fecha_anterior: valorViejo, fecha_nueva: valorNuevo || null, motivo });
-  await sb.from("tareas").update({ [vigCol]: valorNuevo || null }).eq("id", tarea.id);
+  await sb.from("diseno_tareas").update({ [vigCol]: valorNuevo || null }).eq("id", tarea.id);
   $("#modal-fecha").classList.remove("open");
   await cargarTareas(activo.id);
   render();
@@ -524,7 +498,7 @@ async function agendarRevisionPlanta(tareaId, fecha, persona) {
   const t = TAREAS.find(x=>x.id===tareaId);
   if (!t) return;
   await cargarTareasTodas();
-  await sb.from("tareas").update({ rev_fecha:fecha||null, rev_persona:persona||null }).eq("id", tareaId);
+  await sb.from("diseno_tareas").update({ rev_fecha:fecha||null, rev_persona:persona||null }).eq("id", tareaId);
   if (!fecha || !persona) {
     await cargarTareas(activo.id); render(); toast("Revisión guardada"); return;
   }
@@ -571,8 +545,8 @@ async function confirmarRevision() {
   if (!pend) return;
   const { fecha, persona, plan } = pend;
   for (const x of plan) {
-    await sb.from("tareas").update({ fecha_inicio:x.a_ini, fecha_fin:x.a_fin }).eq("id", x.id);
-    await sb.from("historial_fechas").insert({
+    await sb.from("diseno_tareas").update({ fecha_inicio:x.a_ini, fecha_fin:x.a_fin }).eq("id", x.id);
+    await sb.from("diseno_historial_fechas").insert({
       tarea_id:x.id, proyecto_id:x.proyecto_id, campo:"fin",
       fecha_anterior:x.de_fin, fecha_nueva:x.a_fin,
       motivo:"Revision en planta",
@@ -593,7 +567,7 @@ async function confirmarRevision() {
 async function cancelarRevision() {
   const pend = window.__pendienteRevision;
   if (pend) {
-    await sb.from("tareas").update({ rev_fecha:null }).eq("id", pend.tareaId);
+    await sb.from("diseno_tareas").update({ rev_fecha:null }).eq("id", pend.tareaId);
     window.__pendienteRevision = null;
     await cargarTareas(activo.id); render();
   }
@@ -610,7 +584,7 @@ async function guardarMinuta(tareaId, minuta) {
   if (!esCoord() && !soyResponsable(t)) {
     toast("Solo coordinación o el responsable cargan la minuta"); return;
   }
-  const { error } = await sb.from("minutas").insert({
+  const { error } = await sb.from("diseno_minutas").insert({
     tarea_id: tareaId,
     proyecto_id: activo.id,
     fecha_hora: minuta.fecha_hora || null,
@@ -754,7 +728,7 @@ async function aplicarPlanificacion({ silencioso } = {}) {
   // persistir tareas: la base se fija/actualiza con el plan (es la referencia de atraso)
   for (const u of updates) {
     const t = TAREAS.find(x=>x.id===u.id); if(!t) continue;
-    await sb.from("tareas").update({
+    await sb.from("diseno_tareas").update({
       fecha_inicio:u.inicio, fecha_fin:u.fin,
       base_inicio:u.inicio, base_fin:u.fin,
     }).eq("id", t.id);
@@ -763,15 +737,15 @@ async function aplicarPlanificacion({ silencioso } = {}) {
   // marcar la tarea "Analisis general" como cumplida (ya hay inicio + rubros)
   const tAG = TAREAS.find(t=>t.analisis_general);
   if (tAG && !tAG.cumplido) {
-    await sb.from("tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() }).eq("id", tAG.id);
+    await sb.from("diseno_tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() }).eq("id", tAG.id);
   }
 
   // PLAZO DE ENTREGA automatico = fin de Etapa 3
   const plazo = finE3 ? fmtFecha(finE3) : null;
   const catActual = categoriaActiva();
-  await sb.from("proyectos").update({ categoria:catActual, plan_fin_f1:fmtFecha(finE1), plan_fin_f2:finE2?fmtFecha(finE2):null, plazo_entrega:plazo }).eq("id", activo.id);
+  await sb.from("diseno_proyectos").update({ categoria:catActual, plan_fin_f1:fmtFecha(finE1), plan_fin_f2:finE2?fmtFecha(finE2):null, plazo_entrega:plazo }).eq("id", activo.id);
 
-  await sb.from("historial_proyecto").insert({
+  await sb.from("diseno_historial_proyecto").insert({
     proyecto_id: activo.id, proyecto_nombre: activo.nombre, accion:"editar",
     detalle:{ planificacion:"auto", inicio:activo.plan_inicio, categoria:categoriaActiva(), modo_etapa3:(activo.modo_etapa3||"ia"), plazo }, hecho_por: PERFIL.id });
   await logActividad("planificacion_auto",
@@ -791,7 +765,7 @@ async function guardarInicioProyecto(fecha) {
   const val = fecha || null;
   if (activo) activo.plan_inicio = val;
   try {
-    await sb.from("proyectos").update({ plan_inicio: val }).eq("id", activo.id);
+    await sb.from("diseno_proyectos").update({ plan_inicio: val }).eq("id", activo.id);
     const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
     if (ix>=0) PROYECTOS[ix].plan_inicio = val;
   } catch(e){ toast("No se pudo guardar: " + (e.message||e)); return; }
@@ -814,7 +788,7 @@ async function guardarRubrosRedibujo(rubros) {
   actualizarIndicadorCategoria(cat, rubros.length);
   // 3) persistir en segundo plano
   try {
-    await sb.from("proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
+    await sb.from("diseno_proyectos").update({ rubros_redibujar: rubros, categoria: cat }).eq("id", activo.id);
     const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
     if (ix>=0){ PROYECTOS[ix].rubros_redibujar = rubros; PROYECTOS[ix].categoria = cat; }
   } catch(e){
@@ -857,7 +831,7 @@ async function guardarModoEtapa3(modo) {
   const lbl = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).label || modo;
   const dias = (window.MODOS_ETAPA3.find(m=>m.key===modo)||{}).dias_total;
   try {
-    await sb.from("proyectos").update({ modo_etapa3: modo }).eq("id", activo.id);
+    await sb.from("diseno_proyectos").update({ modo_etapa3: modo }).eq("id", activo.id);
     const ix = PROYECTOS.findIndex(p=>p.id===activo.id);
     if (ix>=0) PROYECTOS[ix].modo_etapa3 = modo;
   } catch(e){
@@ -1509,13 +1483,13 @@ function renderActividadLista(items) {
 let DESVIOS = [];
 
 async function cargarDesvios() {
-  const { data } = await sb.from("desvios_nc").select("*").order("creado_en",{ascending:false});
+  const { data } = await sb.from("diseno_desvios_nc").select("*").order("creado_en",{ascending:false});
   DESVIOS = data || [];
 }
 
 // historial de actividad reciente (todos los proyectos), para el dashboard
 async function cargarActividad(limite) {
-  const { data } = await sb.from("historial_actividad").select("*")
+  const { data } = await sb.from("diseno_historial_actividad").select("*")
     .order("created_at", { ascending:false }).limit(limite || 30);
   ACTIVIDAD = data || [];
 }
@@ -1524,7 +1498,7 @@ const EST_NC_LBL = { pendiente:"Pendiente", en_tratamiento:"En tratamiento", cer
 
 async function cambiarEstadoDesvio(id, estado){
   if (!esCoord()) { toast("Solo la coordinacion cambia el estado"); return; }
-  await sb.from("desvios_nc").update({ estado, actualizado_en:new Date().toISOString() }).eq("id", id);
+  await sb.from("diseno_desvios_nc").update({ estado, actualizado_en:new Date().toISOString() }).eq("id", id);
   await cargarDesvios(); render();
 }
 
@@ -1597,7 +1571,7 @@ let INVENTARIO = null;        // inventario.json cargado en memoria
 let AUDITORIAS = [];          // auditorías guardadas
 
 async function cargarAuditorias() {
-  const { data } = await sb.from("auditorias")
+  const { data } = await sb.from("diseno_auditorias")
     .select("id,nombre_modelo,resumen_rubros,informe_texto,estado,creado_en")
     .order("creado_en", { ascending:false }).limit(20);
   AUDITORIAS = data || [];
@@ -1720,7 +1694,7 @@ async function correrAuditoria() {
 
     // 3) guardar en Supabase (asociada al proyecto si se eligio)
     if (status) status.textContent = "Guardando…";
-    const { error:insErr } = await sb.from("auditorias").insert({
+    const { error:insErr } = await sb.from("diseno_auditorias").insert({
       proyecto_id: proyId,
       nombre_modelo: INVENTARIO.meta?.archivo_origen || null,
       inventario: INVENTARIO,
@@ -1734,10 +1708,10 @@ async function correrAuditoria() {
     // 4) AUTO-TILDADO de "Validacion por asistente IA" SOLO si esta limpia
     let msgIA = "";
     if (proyId && limpia) {
-      const { data:tIA } = await sb.from("tareas").select("id,nombre")
+      const { data:tIA } = await sb.from("diseno_tareas").select("id,nombre")
         .eq("proyecto_id", proyId).eq("auto_ia", true).eq("eliminada", false);
       if (tIA && tIA.length) {
-        await sb.from("tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() })
+        await sb.from("diseno_tareas").update({ cumplido:true, cumplido_en:new Date().toISOString() })
           .in("id", tIA.map(x=>x.id));
         msgIA = " · Validacion IA tildada automaticamente.";
         await cargarProyectos();
@@ -1787,7 +1761,7 @@ function renderHallazgos(h) {
 
 // ---------- HISTORIAL (modal) ----------
 async function verHistorial(tareaId) {
-  const { data } = await sb.from("historial_responsable").select("*")
+  const { data } = await sb.from("diseno_historial_responsable").select("*")
     .eq("tarea_id", tareaId).order("cambiado_en",{ascending:false});
   const filas = (data||[]).map(h=>`
     <div class="hist-item">
@@ -1908,7 +1882,7 @@ function bind() {
   if (ncNuevo) ncNuevo.onclick = ()=> $("#modal-nc").classList.add("open");
   const estadoSel = $("#estado-sel");
   if (estadoSel) estadoSel.onchange = async()=>{
-    await sb.from("proyectos").update({ estado: estadoSel.value }).eq("id", activo.id);
+    await sb.from("diseno_proyectos").update({ estado: estadoSel.value }).eq("id", activo.id);
     await cargarProyectos(); activo = PROYECTOS.find(p=>p.id===activo.id); render();
   };
   // --- Auditoría IA ---
@@ -2148,15 +2122,7 @@ function fillNuevoResp(){
 }
 
 window.addEventListener("DOMContentLoaded", ()=>{
-  $("#btn-login").onclick = login;
-  $("#password").addEventListener("keydown", e=>{ if(e.key==="Enter") login(); });
-
-  $("#link-olvide").onclick = (e)=>{ e.preventDefault(); mostrarPantalla("recuperar"); };
-  $("#link-volver-login").onclick = (e)=>{ e.preventDefault(); mostrarPantalla("login"); };
-  $("#btn-recuperar").onclick = enviarRecuperacion;
-  $("#rec-email").addEventListener("keydown", e=>{ if(e.key==="Enter") enviarRecuperacion(); });
-  $("#btn-guardar-clave").onclick = guardarClaveNueva;
-  $("#nc-pass2").addEventListener("keydown", e=>{ if(e.key==="Enter") guardarClaveNueva(); });
+  const bp = $("#btn-ir-portal"); if (bp) bp.onclick = irAlPortal;
 
   fillNuevoResp();
   bindModales();

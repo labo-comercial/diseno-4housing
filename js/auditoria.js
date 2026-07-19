@@ -23,15 +23,18 @@ const AuditoriaIA = (() => {
   // --------------------------------------------------------------------------
   async function rolUsuario() {
     if (window.USER_ROL) return window.USER_ROL;
+    // Si app.js ya cargo el perfil del portal, usamos ese rol directo.
+    if (window.PERFIL?.rol) return window.PERFIL.rol;
     try {
       const { data: u } = await sb.auth.getUser();
       if (!u?.user) return "lectura";
-      const { data } = await sb
-        .from("perfiles")
-        .select("rol")
-        .eq("id", u.user.id)
-        .single();
-      return data?.rol || "lectura";
+      // Perfil del portal: direccion opera como admin; si no, cargo del sector.
+      const [{ data: perfil }, { data: ps }] = await Promise.all([
+        sb.from("perfiles").select("es_direccion, activo").eq("id", u.user.id).maybeSingle(),
+        sb.from("perfiles_sector").select("cargo").eq("perfil_id", u.user.id).eq("sector", "diseno").maybeSingle(),
+      ]);
+      if (perfil?.es_direccion && perfil?.activo) return "admin";
+      return ps?.cargo || "lectura";
     } catch {
       return "lectura";
     }
@@ -201,7 +204,7 @@ const AuditoriaIA = (() => {
       status.textContent = "Guardando…";
 
       // 2. Guardar en Supabase
-      const { error: insErr } = await sb.from("auditorias").insert({
+      const { error: insErr } = await sb.from("diseno_auditorias").insert({
         nombre_modelo: _inventario.meta?.archivo_origen || null,
         inventario: _inventario,
         resumen_rubros: _inventario.resumen_por_rubro || null,
@@ -257,7 +260,7 @@ const AuditoriaIA = (() => {
     if (!list) return;
     try {
       const { data, error } = await sb
-        .from("auditorias")
+        .from("diseno_auditorias")
         .select("id,nombre_modelo,resumen_rubros,informe_texto,estado,creado_en")
         .order("creado_en", { ascending: false })
         .limit(20);
